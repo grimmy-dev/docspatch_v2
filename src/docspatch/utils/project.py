@@ -10,9 +10,10 @@ def get_pyproject_field(pyproject_path: Path, field: str) -> str | None:
         return None
     try:
         data = tomllib.loads(pyproject_path.read_text())
-    except (tomllib.TOMLDecodeError, OSError):
+    except tomllib.TOMLDecodeError, OSError:
         return None
-    return data.get("project", {}).get(field)
+    value = data.get("project", {}).get(field)
+    return str(value) if value is not None else None
 
 
 def get_dir_tree(root: Path, max_depth: int = 3) -> str:

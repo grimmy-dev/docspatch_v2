@@ -1,40 +1,31 @@
-"""Config types."""
+"""Config types. Defaults are sourced from :mod:`docspatch.constants`."""
 
 from dataclasses import dataclass, field
-from typing import Generic, Literal, TypeVar
+from typing import Any, Literal
 
-T = TypeVar("T")
-
-
-@dataclass
-class GlobalConfig:
-    provider: str | None = None
-    api_key_anthropic: str | None = None
-    api_key_openai: str | None = None
-    api_key_gemini: str | None = None
-
-
-@dataclass
-class RepoConfig:
-    generator_model: str | None = None
-    scout_model: str | None = None
-    tone: str | None = None
-
+from docspatch.constants import CONFIG_DEFAULTS
 
 Scope = Literal["global", "repo", "default"]
+ConfigValue = str | int | None
+ConfigPatch = dict[str, ConfigValue]
 
 
-@dataclass
-class ScopedValue(Generic[T]):
+@dataclass(frozen=True)
+class ScopedValue[T]:
     value: T
     scope: Scope
 
 
+def _default(key: str) -> ScopedValue[Any]:
+    return ScopedValue(CONFIG_DEFAULTS[key], "default")
+
+
 @dataclass
 class DocspatchConfig:
-    provider: ScopedValue[str | None] = field(default_factory=lambda: ScopedValue(None, "default"))
-    api_key: ScopedValue[str | None] = field(default_factory=lambda: ScopedValue(None, "default"))
-    generator_model: ScopedValue[str | None] = field(default_factory=lambda: ScopedValue(None, "default"))
-    scout_model: ScopedValue[str | None] = field(default_factory=lambda: ScopedValue("claude-haiku-4-5-20251001", "default"))
-    tone: ScopedValue[str | None] = field(default_factory=lambda: ScopedValue("professional", "default"))
-    batch_token_limit: ScopedValue[int] = field(default_factory=lambda: ScopedValue(6000, "default"))
+    provider: ScopedValue[str | None] = field(default_factory=lambda: _default("provider"))
+    api_key: ScopedValue[str | None] = field(default_factory=lambda: _default("api_key"))
+    generator_model: ScopedValue[str | None] = field(default_factory=lambda: _default("generator_model"))
+    scout_model: ScopedValue[str | None] = field(default_factory=lambda: _default("scout_model"))
+    tone: ScopedValue[str | None] = field(default_factory=lambda: _default("tone"))
+    batch_token_limit: ScopedValue[int] = field(default_factory=lambda: _default("batch_token_limit"))
+    concurrency_limit: ScopedValue[int] = field(default_factory=lambda: _default("concurrency_limit"))

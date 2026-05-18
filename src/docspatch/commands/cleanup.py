@@ -4,9 +4,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-import questionary
-
-from docspatch.ui.console import console
+from docspatch.ui import Prompter, QuestionaryPrompter, console
 
 
 @dataclass
@@ -26,30 +24,43 @@ def cleanup_items(repo_root: Path) -> list[CleanupItem]:
     ]
 
 
-def run() -> None:
-    items = cleanup_items(Path.cwd())
-    choices = [
-        questionary.Choice(f"{item.label}  ({item.path})", value=item)
-        for item in items
-    ]
+def run(prompter: Prompter | None = None, repo_root: Path | None = None) -> None:
+    p = prompter or QuestionaryPrompter()
+    root = repo_root or Path.cwd()
+    items = cleanup_items(root)
+    choices = {f"{item.label}  ({item.path})": item for item in items}
 
-    selected = questionary.checkbox("Select items to delete:", choices=choices).ask()
+    raw = p.checkbox("Select items to delete:", choices)
+    selected: list[CleanupItem] = [c for c in raw if isinstance(c, CleanupItem)]
 
     if not selected:
         console.print("[dim]Nothing selected.[/dim]")
         return
 
-    confirmed = questionary.confirm(f"Delete {len(selected)} item(s)?").ask()
-    if not confirmed:
+    if not p.confirm(f"Delete {len(selected)} item(s)?"):
         console.print("[dim]Cancelled.[/dim]")
         return
 
     for item in selected:
-        if not item.path.exists():
-            console.print(f"[dim]{item.label} not found at {item.path} — skipping.[/dim]")
-            continue
         if item.path.is_dir():
             shutil.rmtree(item.path, ignore_errors=True)
+            console.print(f"Deleted {item.path}")
         else:
-            item.path.unlink(missing_ok=True)
-        console.print(f"Deleted {item.path}")
+            try:
+                item.path.unlink()
+                console.print(f"Deleted {item.path}")
+            except FileNotFoundError:
+                console.print(f"[dim]{item.label} not found at {item.path} — skipping.[/dim]")
+
+    sweep_empty_docspatch_dirs([root / ".docspatch", Path.home() / ".docspatch"])
+
+
+def sweep_empty_docspatch_dirs(roots: list[Path]) -> None:
+    """Remove ``.docspatch`` dirs that are empty after deletions. Idempotent."""
+    for root in roots:
+        try:
+            if root.is_dir() and not any(root.iterdir()):
+                root.rmdir()
+                console.print(f"Removed empty {root}")
+        except OSError:
+            continue

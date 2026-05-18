@@ -8,6 +8,7 @@ class FunctionMetadata:
     name: str
     signature: str
     docstring: str | None = None
+    llm_summary: str | None = None
     line_start: int = 0
     line_end: int = 0
 

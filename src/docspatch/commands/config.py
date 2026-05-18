@@ -1,36 +1,28 @@
-"""dp config command — merged config display with scope labels."""
+"""``dp config`` — show merged config + set/unset individual keys."""
 
 import dataclasses
-from pathlib import Path
 
-from rich.table import Table
-
-from docspatch.ui.console import console
-from docspatch.utils.config import load_config
+from docspatch.ui import build_table, console
+from docspatch.utils.config import ConfigStore, default_store, load_config
+from docspatch.utils.secrets import display_value
 
 
-def mask_api_key(value: object) -> str:
-    """Mask all but the first 4 characters of an API key."""
-    if not value:
-        return "—"
-    s = str(value)
-    return (s[:4] + "••••••••") if len(s) > 4 else "••••••••"
+def current_store() -> ConfigStore:
+    """Canonical ConfigStore for the running command. Test override hook."""
+    return default_store()
 
 
 def run() -> None:
-    cfg = load_config(
-        global_path=Path.home() / ".docspatch" / "config.toml",
-        repo_path=Path.cwd() / ".docspatch" / "config.toml",
-    )
+    s = current_store()
+    cfg = load_config(global_path=s.global_path, repo_path=s.repo_path)
+    rows = [
+        [field.name, display_value(field.name, getattr(cfg, field.name).value), getattr(cfg, field.name).scope]
+        for field in dataclasses.fields(cfg)
+    ]
+    console.print(build_table(["KEY", "VALUE", "SCOPE"], rows))
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("KEY")
-    table.add_column("VALUE")
-    table.add_column("SCOPE")
 
-    for field in dataclasses.fields(cfg):
-        scoped = getattr(cfg, field.name)
-        display = mask_api_key(scoped.value) if field.name == "api_key" else str(scoped.value) if scoped.value is not None else "—"
-        table.add_row(field.name, display, scoped.scope)
-
-    console.print(table)
+def run_set(key: str, value: str) -> None:
+    """Set a single config key. Scope is inferred from the key."""
+    written = current_store().set(key, value)
+    console.print(f"[green]✓[/green] {written.key} = {display_value(written.key, written.value)} ({written.scope})")

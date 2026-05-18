@@ -12,6 +12,9 @@ dependencies = [
     "langchain-openai>=1.2.1",
     "langchain-google-genai>=4.2.2",
     "questionary>=2.1.1",
+    "tomli-w>=1.2.0",
+    "libcst>=1.8.6",
+    "mypy>=2.1.0",
 ]
 
 [project.scripts]

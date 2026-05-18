@@ -1,33 +1,30 @@
-"""Project-wide domain constants."""
+"""Project-wide domain constants. Single source of truth for config defaults and key-sets."""
 
-TONES: dict[str, str] = {
+from typing import Final
+
+TONES: Final[dict[str, str]] = {
     "technical": "Precise; assumes domain knowledge.",
     "professional": "Clear and polished; suitable for all audiences.",
     "casual": "Friendly and approachable.",
 }
 
-LICENSE_TEXTS: dict[str, str | None] = {
-    "MIT": (
-        "MIT License\n\n"
-        "Permission is hereby granted, free of charge, to any person obtaining a copy\n"
-        'of this software and associated documentation files (the "Software"), to deal\n'
-        "in the Software without restriction, including without limitation the rights\n"
-        "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n"
-        "copies of the Software, and to permit persons to whom the Software is\n"
-        "furnished to do so, subject to the following conditions:\n\n"
-        "The above copyright notice and this permission notice shall be included in all\n"
-        "copies or substantial portions of the Software.\n\n"
-        'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n'
-        "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n"
-        "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\n"
-    ),
-    "Apache-2.0": (
-        "Apache License\nVersion 2.0, January 2004\n\n"
-        'Licensed under the Apache License, Version 2.0 (the "License").\n'
-    ),
-    "GPL-3.0": (
-        "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n\n"
-        "Copyright (C) 2007 Free Software Foundation, Inc.\n"
-    ),
-    "Proprietary": None,
+# --- Config schema ---
+
+GLOBAL_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"provider"})
+REPO_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"generator_model", "scout_model", "tone", "batch_token_limit", "concurrency_limit"})
+INT_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"batch_token_limit", "concurrency_limit"})
+
+DEFAULT_SCOUT_MODEL: Final[str] = "claude-haiku-4-5-20251001"
+DEFAULT_TONE: Final[str] = "professional"
+DEFAULT_BATCH_TOKEN_LIMIT: Final[int] = 6000
+DEFAULT_CONCURRENCY_LIMIT: Final[int] = 3
+
+CONFIG_DEFAULTS: Final[dict[str, str | int | None]] = {
+    "provider": None,
+    "api_key": None,
+    "generator_model": None,
+    "scout_model": DEFAULT_SCOUT_MODEL,
+    "tone": DEFAULT_TONE,
+    "batch_token_limit": DEFAULT_BATCH_TOKEN_LIMIT,
+    "concurrency_limit": DEFAULT_CONCURRENCY_LIMIT,
 }
