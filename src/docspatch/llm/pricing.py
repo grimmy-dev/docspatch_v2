@@ -8,7 +8,7 @@ of input and prices each side independently.
 
 from dataclasses import dataclass
 
-from docspatch.llm import tier_info
+from docspatch.llm.catalogue import tier_info
 from docspatch.utils.errors import ConfigError
 
 # Scout summaries measure ~15% of compressed input across Python files.

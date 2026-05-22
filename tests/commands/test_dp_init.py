@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import docspatch.commands.init as init_cmd
 from docspatch.pipelines.scout.state import ScanPlan
-from docspatch.types.config import DocspatchConfig, ScopedValue
+from docspatch.schemas import DocspatchConfig, ScopedValue
 from docspatch.ui import ScriptedPrompter
 
 # Default scripted answers: provider → password → tier → tone → license → scout-confirm
@@ -252,9 +252,7 @@ def test_dp_init_skip_choice_makes_no_llm_call(monkeypatch, tmp_path):
     mock_scout = AsyncMock()
     monkeypatch.setattr("docspatch.pipelines.scout.pipeline.run_scout", mock_scout)
 
-    mock_reader = MagicMock()
-    mock_reader.list_tracked_files.return_value = []
-    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.GitReader", lambda *a, **kw: mock_reader)
+    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.tracked_paths", lambda _root: [])
 
     _patch_env(monkeypatch, context_up_to_date=False)
     init_cmd.run(

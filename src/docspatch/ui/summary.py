@@ -7,9 +7,9 @@ layout, the real-token cost rows, the cache-hit row, and the unresolved list.
 from collections.abc import Iterable
 
 from docspatch.llm import TokenUsage
+from docspatch.llm.pricing import actual_cost
 from docspatch.ui.console import console
 from docspatch.ui.panels import kv_panel
-from docspatch.utils.pricing import actual_cost
 
 
 def cost_rows(usage: TokenUsage, provider: str, tier: str, *, sunk: bool = False) -> list[tuple[str, str]]:

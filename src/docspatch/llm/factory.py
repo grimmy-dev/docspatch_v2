@@ -11,7 +11,7 @@ from typing import Any, cast
 from langchain_core.language_models import BaseChatModel
 
 from docspatch.llm.catalogue import resolve_tier_model
-from docspatch.types.llm import Provider, as_provider
+from docspatch.schemas import Provider, as_provider
 
 KwargsMapper = Callable[[str, str, int | None], dict[str, Any]]
 """Maps ``(model, api_key, max_tokens)`` to one provider's constructor kwargs."""

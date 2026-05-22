@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from docspatch.types.git import CommitInfo
+from docspatch.schemas import CommitInfo
 from docspatch.utils.errors import GitError
 
 
@@ -49,14 +49,6 @@ class GitReader:
             ]
         )
         return _parse_log(result)
-
-    def get_remote_url(self) -> str | None:
-        """Return the origin remote URL, or None if no remote configured."""
-        root = self.find_repo_root()
-        try:
-            return self._run(["git", "-C", str(root), "remote", "get-url", "origin"]).strip()
-        except GitError:
-            return None
 
     def _run(self, cmd: list[str]) -> str:
         """Run a git command. Raises GitError on non-zero exit."""

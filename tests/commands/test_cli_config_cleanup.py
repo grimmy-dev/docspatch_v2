@@ -3,7 +3,7 @@
 from typer.testing import CliRunner
 
 from docspatch.cli import app
-from docspatch.types.config import DocspatchConfig, ScopedValue
+from docspatch.schemas import DocspatchConfig, ScopedValue
 
 runner = CliRunner()
 

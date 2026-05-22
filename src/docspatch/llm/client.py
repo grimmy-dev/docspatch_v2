@@ -7,7 +7,7 @@ from langchain_core.runnables import Runnable
 from docspatch.llm.catalogue import resolve_tier_model
 from docspatch.llm.factory import build_llm, build_validator_llm
 from docspatch.llm.runnable import LLM_RETRY, TypedRunnable, is_transient, wrap_llm_error
-from docspatch.types.llm import Provider, Tier, as_provider, as_tier
+from docspatch.schemas import Provider, Tier, as_provider, as_tier
 from docspatch.utils import key_cache
 from docspatch.utils.retry import OnRetry, RateLimitGate
 

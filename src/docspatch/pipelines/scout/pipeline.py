@@ -10,16 +10,17 @@ from pathlib import Path
 from docspatch.cache import ScoutCache
 from docspatch.llm import LLMClient, TokenUsage
 from docspatch.llm.catalogue import tier_info
+from docspatch.llm.pricing import estimate_cost
 from docspatch.pipelines.scout.graph import run_scout
 from docspatch.pipelines.scout.planner import plan_uncached
 from docspatch.pipelines.scout.state import ScanPlan, ScoutResult
+from docspatch.schemas import RunSettings
 from docspatch.ui import Prompter, console, cost_panel, cost_rows, progress_bar, render_summary, status
 from docspatch.ui.retry_display import RetryDisplay
 from docspatch.utils.config import ConfigStore
-from docspatch.utils.errors import GitError
-from docspatch.utils.git_reader import GitReader
+from docspatch.utils.errors import PathError
 from docspatch.utils.ignore import load_docsignore
-from docspatch.utils.pricing import estimate_cost
+from docspatch.utils.scope import discover_targets
 from docspatch.utils.switcher import offer_switch
 
 
@@ -57,12 +58,17 @@ def pre_build(
 
 
 def tracked_paths(repo_root: Path) -> list[str]:
-    """Tracked ``.py`` files minus ``.docsignore`` matches. Empty list on git failure."""
+    """Every repo ``.py`` file minus ``.docsignore`` matches, repo-relative.
+
+    Routes through the shared :func:`discover_targets` entrypoint so scout sees
+    the same file list as ``dp docs``. Empty list when the repo has no Python.
+    """
+    root = repo_root.resolve()
     try:
-        files = GitReader(cwd=repo_root).list_tracked_files()
-    except GitError:
+        found = discover_targets([Path(".")], root, ignore=load_docsignore(root))
+    except PathError:
         return []
-    return load_docsignore(repo_root).filter(files)
+    return [p.relative_to(root).as_posix() for p in found]
 
 
 def print_estimate(provider: str, scan: ScanPlan) -> None:
@@ -107,7 +113,7 @@ def execute(
         )
         return result.client if result else None
 
-    cfg = store.read()
+    settings = RunSettings.from_config(store.read())
     with progress_bar(total=len(targets), description="Scouting") as bar:
         retry_display.bind(bar.set_status)
         try:
@@ -118,9 +124,9 @@ def execute(
                     llm,
                     progress_cb=lambda path_str: bar(Path(path_str).name),
                     switch_handler=handle_exhaustion,
-                    batch_token_limit=cfg.batch_token_limit.value,
-                    concurrency_limit=cfg.concurrency_limit.value,
-                    call_timeout=cfg.call_timeout.value,
+                    batch_token_limit=settings.batch_token_limit,
+                    concurrency_limit=settings.concurrency_limit,
+                    call_timeout=settings.call_timeout,
                 )
             )
         finally:

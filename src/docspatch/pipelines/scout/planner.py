@@ -6,8 +6,8 @@ from pathlib import Path
 
 from docspatch.cache import ScoutCache
 from docspatch.pipelines.scout.state import FileMiss, ScanPlan
+from docspatch.schemas import FileSummary
 from docspatch.source import compress, estimate_tokens, file_hash
-from docspatch.types.source import FileSummary
 
 
 def partition_paths(paths: Iterable[str], ctx_store: ScoutCache) -> tuple[list[str], list[FileMiss]]:

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from docspatch.constants import TONES
 from docspatch.llm import TIER_CATALOGUE, LLMClient, resolve_tier_model
-from docspatch.types.llm import as_provider
+from docspatch.schemas import as_provider
 from docspatch.ui import Prompter, console, status
 from docspatch.utils.config import ConfigStore
 from docspatch.utils.errors import ConfigError

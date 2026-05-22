@@ -8,7 +8,7 @@ the user a chance to swap providers/tiers without restarting the run.
 from dataclasses import dataclass
 
 from docspatch.llm import TIER_CATALOGUE, LLMClient, resolve_tier_model
-from docspatch.types.llm import Tier, as_provider, as_tier
+from docspatch.schemas import Tier, as_provider, as_tier
 from docspatch.ui import Prompter, aprompt, console
 from docspatch.utils.config import ConfigStore
 from docspatch.utils.retry import OnRetry

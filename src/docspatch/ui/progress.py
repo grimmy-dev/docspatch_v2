@@ -15,7 +15,6 @@ class BarHandle:
 
     bar: Progress
     task: TaskID
-    baseline: str
 
     def __call__(self, message: str | None = None) -> None:
         if message:
@@ -25,10 +24,6 @@ class BarHandle:
     def set_status(self, text: str) -> None:
         """Update description without advancing — for retry / pause notices."""
         self.bar.update(self.task, description=text)
-
-    def clear_status(self) -> None:
-        """Restore the original description."""
-        self.bar.update(self.task, description=self.baseline)
 
     def pause(self) -> None:
         """Stop the live render — call before showing a blocking prompt."""
@@ -51,4 +46,4 @@ def progress_bar(total: int, description: str = "Working") -> Iterator[BarHandle
     )
     with Progress(*columns, console=console, transient=True) as progress:
         task_id = progress.add_task(description, total=total)
-        yield BarHandle(bar=progress, task=task_id, baseline=description)
+        yield BarHandle(bar=progress, task=task_id)

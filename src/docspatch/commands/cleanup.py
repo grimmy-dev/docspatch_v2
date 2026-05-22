@@ -16,11 +16,10 @@ class CleanupItem:
 def cleanup_items(repo_root: Path) -> list[CleanupItem]:
     home = Path.home()
     return [
-        CleanupItem("Scout cache", repo_root / ".docspatch" / "cache"),
-        CleanupItem("Function hashes", home / ".docspatch" / "hashes.json"),
-        CleanupItem("Checkpoints", home / ".docspatch" / "checkpoints.db"),
+        CleanupItem("Caches", repo_root / ".docspatch" / "cache"),
+        CleanupItem("Checkpoints", repo_root / ".docspatch" / "checkpoints"),
         CleanupItem("Repo config", repo_root / ".docspatch" / "config.toml"),
-        CleanupItem("Global config", home / ".docspatch" / "config.toml"),
+        CleanupItem("Global docspatch data (~/.docspatch)", home / ".docspatch"),
     ]
 
 

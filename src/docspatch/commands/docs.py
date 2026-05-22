@@ -12,6 +12,7 @@ from docspatch.llm import LLMClient, tier_for_model
 from docspatch.pipelines.docs import run_docs
 from docspatch.pipelines.docs.flags import RunFlags, preview_check, validate_run_flags
 from docspatch.pipelines.docs.generator import LLMDocstringGenerator
+from docspatch.schemas import RunSettings
 from docspatch.ui import Prompter, QuestionaryPrompter, console
 from docspatch.ui.retry_display import RetryDisplay
 from docspatch.ui.review_panel import prompt_conflict, review_session
@@ -19,7 +20,7 @@ from docspatch.utils.config import default_store
 from docspatch.utils.ignore import load_docsignore
 from docspatch.utils.lockfile import run_lock
 from docspatch.utils.logging import get_logger
-from docspatch.utils.scope import resolve_scope
+from docspatch.utils.scope import discover_targets
 from docspatch.utils.selection import ensure_configured
 from docspatch.utils.switcher import offer_switch
 
@@ -44,13 +45,13 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
         ignore = load_docsignore(repo_root)
         # No explicit paths -> document the whole repo.
         scope = list(flags.paths) or [Path(".")]
-        targets = resolve_scope(scope, repo_root, ignore=ignore, no_ignore=flags.no_ignore)
+        targets = discover_targets(scope, repo_root, ignore=ignore, no_ignore=flags.no_ignore)
         log.debug("resolved scope: %d target file(s)", len(targets))
 
         store = default_store(repo_root)
         p = prompter or QuestionaryPrompter()
         selections = ensure_configured(store, p)
-        cfg = store.read()
+        settings = RunSettings.from_config(store.read())
         tier = tier_for_model(selections.provider, selections.generator_model)
         log.debug("config loaded: provider=%s tier=%s", selections.provider, tier)
 
@@ -101,9 +102,9 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
                 tone=selections.tone,
                 repo_root=repo_root,
                 flags=flags,
-                batch_token_limit=cfg.batch_token_limit.value,
-                concurrency_limit=cfg.concurrency_limit.value,
-                call_timeout=cfg.call_timeout.value,
+                batch_token_limit=settings.batch_token_limit,
+                concurrency_limit=settings.concurrency_limit,
+                call_timeout=settings.call_timeout,
                 provider=selections.provider,
                 tier=tier,
                 cache=cache,

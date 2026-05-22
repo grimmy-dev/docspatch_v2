@@ -1,6 +1,6 @@
 """LLM facade: catalogue, factory, client. Single import point for callers.
 
-Type narrowers (``as_provider`` / ``as_tier``) live in :mod:`docspatch.types.llm`
+Type narrowers (``as_provider`` / ``as_tier``) live in :mod:`docspatch.schemas`
 next to the literals they narrow — import them there.
 """
 

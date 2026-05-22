@@ -4,10 +4,9 @@ import gzip
 import json
 from pathlib import Path
 
-from docspatch.cache import ScoutCache
-from docspatch.cache.keys import cache_key
+from docspatch.cache import ScoutCache, cache_key
 from docspatch.pipelines.scout.planner import build_structured_context
-from docspatch.types.source import FileSummary, FunctionMetadata
+from docspatch.schemas import FileSummary, FunctionMetadata
 from docspatch.utils.ignore import ensure_docspatch_ignored
 
 

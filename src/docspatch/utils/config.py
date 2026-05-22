@@ -12,7 +12,7 @@ from typing import Any
 import tomli_w
 
 from docspatch.constants import CONFIG_DEFAULTS, GLOBAL_CONFIG_KEYS, INT_CONFIG_KEYS, REPO_CONFIG_KEYS
-from docspatch.types.config import ConfigPatch, ConfigValue, DocspatchConfig, Scope, ScopedValue
+from docspatch.schemas import ConfigPatch, ConfigValue, DocspatchConfig, Scope, ScopedValue
 from docspatch.utils.errors import ConfigError
 from docspatch.utils.fs import atomic_write
 

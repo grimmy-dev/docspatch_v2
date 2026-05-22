@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import libcst as cst
 
 from docspatch.cache import FunctionDocState
-from docspatch.types.source import FunctionMetadata
+from docspatch.schemas import FunctionMetadata
 
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
@@ -25,6 +25,11 @@ def scan_functions(source: str) -> dict[str, FunctionDocState]:
         tree = ast.parse(source)
     except SyntaxError:
         return {}
+    return scan_functions_in(tree)
+
+
+def scan_functions_in(tree: ast.AST) -> dict[str, FunctionDocState]:
+    """Like :func:`scan_functions` but on an already-parsed tree — avoids a re-parse."""
     result: dict[str, FunctionDocState] = {}
     _walk_functions(tree, parents=[], out=result)
     return result

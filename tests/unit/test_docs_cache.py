@@ -19,25 +19,25 @@ def make_state(file_hash: str = "deadbeef") -> FileDocState:
 
 def test_get_missing_path_returns_none(tmp_path: Path) -> None:
     cache = DocsCache(tmp_path)
-    assert cache.get_state("src/missing.py") is None
+    assert cache.get("src/missing.py") is None
 
 
 def test_round_trip_set_then_get(tmp_path: Path) -> None:
     cache = DocsCache(tmp_path)
     state = make_state()
 
-    cache.set_state("src/foo.py", state)
+    cache.set("src/foo.py", state)
 
-    loaded = cache.get_state("src/foo.py")
+    loaded = cache.get("src/foo.py")
     assert loaded == state
 
 
 def test_round_trip_survives_new_instance(tmp_path: Path) -> None:
     cache = DocsCache(tmp_path)
-    cache.set_state("src/foo.py", make_state())
+    cache.set("src/foo.py", make_state())
 
     fresh = DocsCache(tmp_path)
-    assert fresh.get_state("src/foo.py") == make_state()
+    assert fresh.get("src/foo.py") == make_state()
 
 
 def test_needs_rerun_empty_cache_returns_all_targets(tmp_path: Path) -> None:
@@ -51,7 +51,7 @@ def test_needs_rerun_empty_cache_returns_all_targets(tmp_path: Path) -> None:
 
 def test_needs_rerun_skips_cached_documented(tmp_path: Path) -> None:
     cache = DocsCache(tmp_path)
-    cache.set_state(
+    cache.set(
         "src/foo.py",
         FileDocState(
             path="src/foo.py",
@@ -65,7 +65,7 @@ def test_needs_rerun_skips_cached_documented(tmp_path: Path) -> None:
 
 def test_needs_rerun_targets_changed_hash(tmp_path: Path) -> None:
     cache = DocsCache(tmp_path)
-    cache.set_state(
+    cache.set(
         "src/foo.py",
         FileDocState(
             path="src/foo.py",
@@ -79,7 +79,7 @@ def test_needs_rerun_targets_changed_hash(tmp_path: Path) -> None:
 
 def test_needs_rerun_targets_missing_docstring(tmp_path: Path) -> None:
     cache = DocsCache(tmp_path)
-    cache.set_state(
+    cache.set(
         "src/foo.py",
         FileDocState(
             path="src/foo.py",
@@ -93,10 +93,10 @@ def test_needs_rerun_targets_missing_docstring(tmp_path: Path) -> None:
 
 def test_schema_mismatch_evicts(tmp_path: Path) -> None:
     cache = DocsCache(tmp_path)
-    cache.set_state("src/foo.py", make_state())
+    cache.set("src/foo.py", make_state())
     entry = next((tmp_path / ".docspatch" / "cache" / "docs").iterdir())
     entry.write_bytes(gzip.compress(b'{"_schema_version": 999, "path": "x", "file_hash": "h", "functions": {}}'))
 
     fresh = DocsCache(tmp_path)
-    assert fresh.get_state("src/foo.py") is None
+    assert fresh.get("src/foo.py") is None
     assert not entry.exists()

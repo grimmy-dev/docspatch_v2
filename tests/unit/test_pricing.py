@@ -2,8 +2,8 @@
 
 import pytest
 
+from docspatch.llm.pricing import estimate_cost
 from docspatch.utils.errors import ConfigError
-from docspatch.utils.pricing import estimate_cost
 
 
 def test_estimate_separates_input_and_output_cost():

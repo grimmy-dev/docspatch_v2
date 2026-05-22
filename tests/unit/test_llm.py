@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from docspatch.llm import TIER_CATALOGUE, LLMClient, TypedRunnable
-from docspatch.types.llm import as_provider
+from docspatch.schemas import as_provider
 from docspatch.utils.errors import ConfigError, LLMError
 
 PROVIDERS = ["anthropic", "openai", "gemini"]

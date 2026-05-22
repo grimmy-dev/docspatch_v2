@@ -13,9 +13,8 @@ from docspatch.llm import TokenUsage, TypedRunnable
 from docspatch.pipelines.scout.context import ScoutContext
 from docspatch.pipelines.scout.prompts import build_batch_prompt
 from docspatch.pipelines.scout.state import FileMiss, ScoutBatch, ScoutResult
+from docspatch.schemas import BatchSummaryOutput, FileSummary, FileSummaryOutput, FunctionMetadata
 from docspatch.source import extract_function_metadata
-from docspatch.types.llm import BatchSummaryOutput, FileSummaryOutput
-from docspatch.types.source import FileSummary, FunctionMetadata
 from docspatch.utils.errors import ParseFailed, TransientExhausted
 
 

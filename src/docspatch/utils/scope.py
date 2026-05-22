@@ -6,7 +6,7 @@ from docspatch.utils.errors import PathError
 from docspatch.utils.ignore import DocsIgnore
 
 
-def resolve_scope(
+def discover_targets(
     paths: list[Path],
     repo_root: Path,
     ignore: DocsIgnore,

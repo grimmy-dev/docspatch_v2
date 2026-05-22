@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from docspatch.cache import DocsCache
-from docspatch.source import MODULE_QUALNAME, FunctionNode, compress, scan_functions
+from docspatch.source import MODULE_QUALNAME, FunctionNode, compress, scan_functions_in
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ def collect_targets(
         module = module_target(abs_path, rel, source, update=update)
         if module is not None:
             out.append(module)
-        skip = set() if update else cached_skip_set(rel, source, cache)
+        skip = set() if update else cached_skip_set(rel, tree, cache)
         cache_hits += len(skip)
         source_lines = source.splitlines()
         walk_targets(
@@ -76,14 +76,14 @@ def module_target(file: Path, rel: str, source: str, *, update: bool) -> Target 
     return Target(file=file, rel=rel, qualname=MODULE_QUALNAME, signature=f"module {rel}", body=compress(source))
 
 
-def cached_skip_set(rel: str, source: str, cache: DocsCache | None) -> set[str]:
-    """Qualnames already documented at current hash."""
+def cached_skip_set(rel: str, tree: ast.AST, cache: DocsCache | None) -> set[str]:
+    """Qualnames already documented at current hash. Reuses the caller's parsed tree."""
     if cache is None:
         return set()
     cached = cache.get(rel)
     if cached is None:
         return set()
-    current = scan_functions(source)
+    current = scan_functions_in(tree)
     return {q for q, fn in current.items() if (prior := cached.functions.get(q)) and prior.hash == fn.hash and prior.has_docstring}
 
 

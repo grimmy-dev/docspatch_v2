@@ -9,12 +9,12 @@ from collections import defaultdict
 from langgraph.graph import END, START, StateGraph
 
 from docspatch.llm.catalogue import tier_info
+from docspatch.llm.pricing import estimate_cost
 from docspatch.pipelines.docs.context import GraphContext
 from docspatch.pipelines.docs.planner import collect_targets
 from docspatch.pipelines.docs.state import BatchRef, CostBreakdown, PlanState, TargetRef
 from docspatch.ui import console, cost_panel, status, warning_panel
 from docspatch.utils.batcher import greedy_batches
-from docspatch.utils.pricing import estimate_cost
 
 
 def build_plan_graph(ctx: GraphContext):  # noqa: ANN201

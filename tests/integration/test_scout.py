@@ -1,4 +1,4 @@
-"""Scout + RunContext behavior tests — real filesystem, mocked LLM, no network."""
+"""Scout behavior tests — real filesystem, mocked LLM, no network."""
 
 import asyncio
 import re
@@ -8,11 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 from docspatch.cache import ScoutCache
 from docspatch.llm import TokenUsage
 from docspatch.pipelines.scout.graph import run_scout
+from docspatch.schemas import BatchSummaryOutput, FileSummary, FileSummaryOutput
 from docspatch.source import file_hash
-from docspatch.types.config import DocspatchConfig
-from docspatch.types.llm import BatchSummaryOutput, FileSummaryOutput
-from docspatch.types.source import FileSummary
-from docspatch.utils.run_context import RunContext
 
 SAMPLE_SOURCE = "def foo():\n    return 1\n"
 
@@ -366,42 +363,3 @@ def test_scout_hung_call_cancelled_by_timeout(tmp_path):
         )
     )
     assert result.scouted == 1
-
-
-# --- RunContext ---
-
-
-def test_run_context_progress_calls_callback(tmp_path):
-    calls: list[str] = []
-    ctx = RunContext(
-        llm_client=MagicMock(),
-        ctx_store=make_store(tmp_path),
-        config=DocspatchConfig(),
-        progress_cb=calls.append,
-    )
-    ctx.progress("step 1")
-    assert calls == ["step 1"]
-
-
-def test_run_context_default_noop_progress_does_not_raise(tmp_path):
-    ctx = RunContext(
-        llm_client=MagicMock(),
-        ctx_store=make_store(tmp_path),
-        config=DocspatchConfig(),
-    )
-    ctx.progress("no-op")
-
-
-def test_run_context_scout_returns_scouted_count(tmp_path):
-    src = tmp_path / "mod.py"
-    src.write_text(SAMPLE_SOURCE)
-
-    ctx = RunContext(
-        llm_client=make_llm_client(),
-        ctx_store=make_store(tmp_path),
-        config=DocspatchConfig(),
-    )
-    result = asyncio.run(ctx.scout([str(src)]))
-
-    assert result.scouted == 1
-    assert result.skipped == 0

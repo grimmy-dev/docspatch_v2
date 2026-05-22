@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from docspatch.types.llm import Provider, Tier, as_provider, as_tier
+from docspatch.schemas import Provider, Tier, as_provider, as_tier
 from docspatch.utils.errors import ConfigError
 
 

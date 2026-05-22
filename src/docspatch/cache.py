@@ -1,0 +1,256 @@
+"""Unified cache layer. Gzip-JSON file cache with hash-based invalidation.
+
+One generic base (:class:`GzipJSONCache`) handles paths, atomic writes,
+memoization, schema-version eviction, and key derivation. The two pipeline
+caches (:class:`DocsCache`, :class:`ScoutCache`) only supply their schema
+version, subdir, and state ↔ JSON mapping.
+"""
+
+import gzip
+import hashlib
+import json
+from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, ClassVar
+
+from docspatch.schemas import FileSummary, FunctionMetadata
+from docspatch.ui.console import console
+from docspatch.utils.errors import CacheError
+from docspatch.utils.fs import atomic_write
+
+__all__ = [
+    "DOCS_CACHE_SCHEMA_VERSION",
+    "SCOUT_CACHE_SCHEMA_VERSION",
+    "CacheInfo",
+    "DocsCache",
+    "FileDocState",
+    "FunctionDocState",
+    "GzipJSONCache",
+    "ScoutCache",
+    "cache_key",
+]
+
+# ---- Key derivation --------------------------------------------------------
+
+KEY_HEX_WIDTH = 32
+
+
+def cache_key(rel_path: str, suffix: str = ".json.gz") -> str:
+    """Deterministic filename for ``rel_path``. Stable across repo moves."""
+    digest = hashlib.sha256(rel_path.encode()).hexdigest()[:KEY_HEX_WIDTH]
+    return f"{digest}{suffix}"
+
+
+# ---- Gzip-JSON envelope ----------------------------------------------------
+
+_HEADER_BYTES = 4
+
+
+def _pack(payload: dict[str, Any], schema: int) -> bytes:
+    """Schema header (4-byte BE) + gzip-JSON payload."""
+    return schema.to_bytes(_HEADER_BYTES, "big") + gzip.compress(json.dumps(payload).encode())
+
+
+def _unpack(raw: bytes, expected_schema: int) -> tuple[dict[str, Any] | None, int]:
+    """Inflate ``raw``. Returns ``(payload, version)``; payload ``None`` on mismatch."""
+    if len(raw) < _HEADER_BYTES:
+        return None, 0
+    version = int.from_bytes(raw[:_HEADER_BYTES], "big")
+    if version != expected_schema:
+        return None, version
+    payload: dict[str, Any] = json.loads(gzip.decompress(raw[_HEADER_BYTES:]))
+    return payload, version
+
+
+@dataclass(frozen=True)
+class CacheInfo:
+    """File count, total size, and most-recent mtime for any cache flavour."""
+
+    file_count: int
+    total_size_bytes: int
+    last_build: datetime | None
+
+
+# ---- Generic base ----------------------------------------------------------
+
+
+class GzipJSONCache[T](ABC):
+    """File-level cache backed by gzipped JSON. Hash-based invalidation, no TTL."""
+
+    SCHEMA_VERSION: ClassVar[int]
+    SUBDIR: ClassVar[str]
+    LABEL: ClassVar[str] = "cache"
+
+    def __init__(self, repo_root: Path) -> None:
+        self.root = repo_root.resolve()
+        self.cache_dir = self.root / ".docspatch" / "cache" / self.SUBDIR
+        self._memo: dict[str, T | None] = {}
+        self._schema_warned = False
+
+    def get(self, path: str) -> T | None:
+        """Return cached state for ``path``, or ``None`` if absent or stale."""
+        if path in self._memo:
+            return self._memo[path]
+        entry = self.cache_dir / cache_key(path)
+        try:
+            raw = entry.read_bytes()
+        except FileNotFoundError:
+            self._memo[path] = None
+            return None
+        except OSError as exc:
+            raise CacheError.read_failed(path, exc) from exc
+        payload, version = _unpack(raw, self.SCHEMA_VERSION)
+        if payload is None:
+            self.evict_stale(entry, version)
+            self._memo[path] = None
+            return None
+        state = self.from_dict(payload)
+        self._memo[path] = state
+        return state
+
+    def set(self, path: str, state: T) -> None:
+        """Persist ``state`` for ``path``. Replaces any existing entry."""
+        entry = self.cache_dir / cache_key(path)
+        try:
+            atomic_write(entry, _pack(self.to_dict(state), self.SCHEMA_VERSION))
+        except OSError as exc:
+            raise CacheError.write_failed(path, exc) from exc
+        self._memo[path] = state
+
+    def info(self) -> CacheInfo:
+        """Return file count, total size, and last-build timestamp."""
+        empty = CacheInfo(file_count=0, total_size_bytes=0, last_build=None)
+        try:
+            files = [f for f in self.cache_dir.iterdir() if f.suffix == ".gz"]
+        except FileNotFoundError:
+            return empty
+        if not files:
+            return empty
+        stats = [f.stat() for f in files]
+        return CacheInfo(
+            file_count=len(files),
+            total_size_bytes=sum(s.st_size for s in stats),
+            last_build=datetime.fromtimestamp(max(s.st_mtime for s in stats)),
+        )
+
+    def evict_stale(self, entry: Path, version: int) -> None:
+        """Delete a stale entry. Warn once per instance."""
+        entry.unlink(missing_ok=True)
+        if not self._schema_warned:
+            console.print(
+                f"[yellow]{self.LABEL} schema changed (v{version} → v{self.SCHEMA_VERSION}). "
+                "Stale entries will be re-built on demand.[/yellow]"
+            )
+            self._schema_warned = True
+
+    @abstractmethod
+    def to_dict(self, state: T) -> dict[str, Any]:
+        """Serialise ``state`` to a JSON-safe payload (no schema key)."""
+
+    @abstractmethod
+    def from_dict(self, payload: dict[str, Any]) -> T:
+        """Materialise the cache state from a JSON payload."""
+
+
+# ---- Docs cache ------------------------------------------------------------
+
+DOCS_CACHE_SCHEMA_VERSION = 1
+
+
+@dataclass
+class FunctionDocState:
+    """Hash + presence flag for a single function."""
+
+    hash: str
+    has_docstring: bool
+    line_start: int = 0
+
+
+@dataclass
+class FileDocState:
+    """File-level state: file hash and per-function map keyed by qualname."""
+
+    path: str
+    file_hash: str
+    functions: dict[str, FunctionDocState] = field(default_factory=dict)
+
+
+class DocsCache(GzipJSONCache[FileDocState]):
+    """Docs pipeline's per-function generation state."""
+
+    SCHEMA_VERSION = DOCS_CACHE_SCHEMA_VERSION
+    SUBDIR = "docs"
+    LABEL = "Docs cache"
+
+    def to_dict(self, state: FileDocState) -> dict[str, Any]:
+        return asdict(state)
+
+    def from_dict(self, payload: dict[str, Any]) -> FileDocState:
+        return FileDocState(
+            path=payload.get("path", ""),
+            file_hash=payload.get("file_hash", ""),
+            functions={name: FunctionDocState(**fn) for name, fn in payload.get("functions", {}).items()},
+        )
+
+    def needs_rerun(self, path: str, current: dict[str, FunctionDocState]) -> list[str]:
+        """Return qualnames in ``current`` that should be (re)generated."""
+        cached = self.get(path)
+        if cached is None:
+            return list(current)
+        targets: list[str] = []
+        for qualname, fn in current.items():
+            prior = cached.functions.get(qualname)
+            if prior is None or prior.hash != fn.hash or not prior.has_docstring:
+                targets.append(qualname)
+        return targets
+
+
+# ---- Scout cache -----------------------------------------------------------
+
+SCOUT_CACHE_SCHEMA_VERSION = 2
+
+
+class ScoutCache(GzipJSONCache[FileSummary]):
+    """Scout pipeline's file-summary cache. Hash-keyed, schema-versioned."""
+
+    SCHEMA_VERSION = SCOUT_CACHE_SCHEMA_VERSION
+    SUBDIR = "scout"
+    LABEL = "Scout cache"
+
+    def to_dict(self, state: FileSummary) -> dict[str, Any]:
+        return {
+            "path": state.path,
+            "summary": state.summary,
+            "content_hash": state.content_hash,
+            "functions": [
+                {
+                    "name": fn.name,
+                    "signature": fn.signature,
+                    "docstring": fn.docstring,
+                    "llm_summary": fn.llm_summary,
+                    "line_start": fn.line_start,
+                    "line_end": fn.line_end,
+                }
+                for fn in state.functions
+            ],
+        }
+
+    def from_dict(self, payload: dict[str, Any]) -> FileSummary:
+        return FileSummary(
+            path=payload.get("path", ""),
+            summary=payload.get("summary", ""),
+            content_hash=payload.get("content_hash", ""),
+            functions=[
+                FunctionMetadata(
+                    name=fn.get("name", ""),
+                    signature=fn.get("signature", ""),
+                    docstring=fn.get("docstring"),
+                    llm_summary=fn.get("llm_summary"),
+                    line_start=fn.get("line_start", 0),
+                    line_end=fn.get("line_end", 0),
+                )
+                for fn in payload.get("functions", [])
+            ],
+        )

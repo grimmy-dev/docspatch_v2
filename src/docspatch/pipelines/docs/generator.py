@@ -6,7 +6,7 @@ from docspatch.pipelines.docs.prompts import (
     build_batch_docstring_prompt,
     contains_banned_phrase,
 )
-from docspatch.types.llm import BatchDocstringOutput
+from docspatch.schemas import BatchDocstringOutput
 
 BANNED_RETRY_LIMIT = 2
 """Max silent retries per key when a banned phrase is detected."""
