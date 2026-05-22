@@ -10,6 +10,7 @@ from docspatch.llm.runnable import LLM_RETRY, TypedRunnable, is_transient, wrap_
 from docspatch.schemas import Provider, Tier, as_provider, as_tier
 from docspatch.utils import key_cache
 from docspatch.utils.retry import OnRetry, RateLimitGate
+from docspatch.utils.secrets import register_secret
 
 RetryCallback = OnRetry
 
@@ -29,6 +30,7 @@ class LLMClient:
         self.provider: Provider = as_provider(provider)
         self.generator_tier: Tier = as_tier(generator_tier)
         self._api_key = api_key
+        register_secret(api_key)  # mask this key in any later error/log text
         self.llm = build_llm(self.provider, api_key, self.generator_tier)
         self.retry_cb = retry_cb
         self.gate = RateLimitGate(LLM_RETRY, on_retry=retry_cb)

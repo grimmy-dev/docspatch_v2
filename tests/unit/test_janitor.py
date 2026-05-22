@@ -1,6 +1,7 @@
 """Janitor sweeps expired checkpoint artifacts."""
 
 import os
+import sqlite3
 import time
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from docspatch.checkpoints.janitor import (
     maybe_sweep,
     safe_sweep,
     sweep,
+    vacuum_checkpoints,
 )
 from docspatch.utils.config import default_store, read_toml
 
@@ -54,6 +56,33 @@ def test_sweep_ignores_unrelated_files(tmp_path: Path) -> None:
     sweep(dir)
 
     assert keep.exists()
+
+
+def test_sweep_does_not_touch_open_sqlite(tmp_path: Path) -> None:
+    """Sweep must not VACUUM — a run holding docs.sqlite open would lock-crash."""
+    dir = checkpoint_dir(tmp_path)
+    dir.mkdir(parents=True, exist_ok=True)
+    db = dir / "docs.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE t (x)")
+    conn.execute("BEGIN EXCLUSIVE")  # hold an exclusive lock, as a live run would
+    try:
+        sweep(dir)  # must not raise "database is locked"
+    finally:
+        conn.close()
+
+
+def test_vacuum_checkpoints_runs_on_closed_db(tmp_path: Path) -> None:
+    dir = checkpoint_dir(tmp_path)
+    dir.mkdir(parents=True, exist_ok=True)
+    db = dir / "docs.sqlite"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE t (x)")
+    vacuum_checkpoints(dir)  # db closed — must not raise
+
+
+def test_vacuum_checkpoints_missing_db_is_noop(tmp_path: Path) -> None:
+    vacuum_checkpoints(checkpoint_dir(tmp_path))  # must not raise
 
 
 def test_safe_sweep_swallows_errors_and_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

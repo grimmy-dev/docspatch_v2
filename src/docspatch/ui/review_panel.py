@@ -18,7 +18,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from docspatch.source import MODULE_QUALNAME, DocstringInsert, FunctionNode, insert_docstrings
-from docspatch.ui.console import console
+from docspatch.ui.console import console, terminal_size
 from docspatch.ui.prompter import Prompter
 
 SIDEBAR_MIN_WIDTH = 100
@@ -143,7 +143,7 @@ def review_session(
             preview=preview,
             files=files,
             siblings=siblings.get(entry.rel, [entry.qualname]),
-            console_width=console.size.width,
+            console_width=terminal_size()[0],
         )
 
     choice = run_review(parsed, render=render, prompter=prompter, allow_rerun=allow_rerun)

@@ -91,6 +91,49 @@ def test_needs_rerun_targets_missing_docstring(tmp_path: Path) -> None:
     assert cache.needs_rerun("src/foo.py", current) == ["add"]
 
 
+def cache_entry(tmp_path: Path) -> Path:
+    return next((tmp_path / ".docspatch" / "cache" / "docs").iterdir())
+
+
+def test_corrupt_garbage_file_evicted_as_miss(tmp_path: Path) -> None:
+    """A garbage cache file is evicted and read as a miss — never crashes the run."""
+    cache = DocsCache(tmp_path)
+    cache.set("src/foo.py", make_state())
+    entry = cache_entry(tmp_path)
+    entry.write_bytes(b"\x00\x01not-a-valid-gzip-payload\xff")
+
+    fresh = DocsCache(tmp_path)
+    assert fresh.get("src/foo.py") is None
+    assert not entry.exists()
+
+
+def test_corrupt_truncated_gzip_evicted_as_miss(tmp_path: Path) -> None:
+    cache = DocsCache(tmp_path)
+    cache.set("src/foo.py", make_state())
+    entry = cache_entry(tmp_path)
+    raw = entry.read_bytes()
+    entry.write_bytes(raw[: len(raw) // 2])  # truncate mid-payload
+
+    fresh = DocsCache(tmp_path)
+    assert fresh.get("src/foo.py") is None
+    assert not entry.exists()
+
+
+def test_corrupt_bad_json_shape_evicted_as_miss(tmp_path: Path) -> None:
+    """Valid gzip + schema header but unparseable JSON is still a clean miss."""
+    from docspatch.cache import DOCS_CACHE_SCHEMA_VERSION
+
+    cache = DocsCache(tmp_path)
+    cache.set("src/foo.py", make_state())
+    entry = cache_entry(tmp_path)
+    header = DOCS_CACHE_SCHEMA_VERSION.to_bytes(4, "big")
+    entry.write_bytes(header + gzip.compress(b"this is not json"))
+
+    fresh = DocsCache(tmp_path)
+    assert fresh.get("src/foo.py") is None
+    assert not entry.exists()
+
+
 def test_schema_mismatch_evicts(tmp_path: Path) -> None:
     cache = DocsCache(tmp_path)
     cache.set("src/foo.py", make_state())

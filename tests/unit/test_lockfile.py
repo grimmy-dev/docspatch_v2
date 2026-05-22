@@ -54,3 +54,20 @@ def test_lock_released_on_exception(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError), run_lock(tmp_path):
         raise RuntimeError("boom")
     assert not lock_path(tmp_path).exists()
+
+
+def test_permission_error_on_pid_check_treats_lock_as_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PID owned by another user (os.kill -> PermissionError) must not be stolen."""
+    lock = lock_path(tmp_path)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(json.dumps({"pid": 4242, "started": 1.0}))
+
+    def denied(_pid: int, _sig: int) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr(os, "kill", denied)
+
+    with pytest.raises(LockError, match="in progress"), run_lock(tmp_path):
+        pass

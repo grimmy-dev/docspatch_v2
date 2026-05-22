@@ -110,6 +110,13 @@ class ConfigError(DocspatchError):
     def key_validation_failed(cls, exc: Exception) -> ConfigError:
         return cls(f"Key validation failed: {exc}", hint="Check your key.")
 
+    @classmethod
+    def headless_no_input(cls, question: str) -> ConfigError:
+        return cls(
+            f"Cannot prompt in a non-interactive session: {question!r}",
+            hint="Run in a terminal, or set the required config value beforehand.",
+        )
+
 
 class LLMError(DocspatchError):
     """LLM API call failed — usually a provider-side fault, so retryable."""

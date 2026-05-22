@@ -12,12 +12,21 @@ so commands can present friendly labels while returning typed values.
 """
 
 import asyncio
+import os
+import sys
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Protocol, cast, runtime_checkable
 
 import questionary
 
+from docspatch.utils.errors import ConfigError
+
 Choices = list[str] | Mapping[str, object]
+
+
+def is_interactive() -> bool:
+    """True when prompting is safe — stdin is a TTY and no CI signal is set."""
+    return sys.stdin.isatty() and not os.environ.get("CI")
 
 
 @runtime_checkable
@@ -32,22 +41,38 @@ class Prompter(Protocol):
 
 
 class QuestionaryPrompter:
-    """Real terminal prompter. Returns the selected `value` for dict-style choices."""
+    """Real terminal prompter. Returns the selected `value` for dict-style choices.
+
+    In a non-interactive session (piped/CI) questionary would hang forever, so
+    each call falls back to its default answer — or aborts when none is safe.
+    """
 
     def select(self, question: str, choices: Choices, default: str | None = None) -> object:
+        if not is_interactive():
+            if default is None:
+                raise ConfigError.headless_no_input(question)
+            return default
         return questionary.select(question, choices=_to_questionary_choices(choices), default=default).ask()
 
     def password(self, question: str) -> str:
+        if not is_interactive():
+            raise ConfigError.headless_no_input(question)
         return str(questionary.password(question).ask())
 
     def confirm(self, question: str, default: bool = True) -> bool:
+        if not is_interactive():
+            return default
         result = questionary.confirm(question, default=default).ask()
         return bool(result)
 
     def checkbox(self, question: str, choices: Choices) -> list[object]:
+        if not is_interactive():
+            return []
         return questionary.checkbox(question, choices=_to_questionary_choices(choices)).ask() or []
 
     def text(self, question: str, default: str = "") -> str:
+        if not is_interactive():
+            return default
         result = questionary.text(question, default=default).ask()
         return "" if result is None else str(result)
 

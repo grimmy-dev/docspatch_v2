@@ -6,7 +6,7 @@ from pathlib import Path
 import typer
 
 from docspatch.cache import DocsCache
-from docspatch.checkpoints.janitor import start_janitor
+from docspatch.checkpoints.janitor import start_janitor, vacuum_checkpoints
 from docspatch.checkpoints.runs import list_incomplete_runs, pick_last_run
 from docspatch.llm import LLMClient, tier_for_model
 from docspatch.pipelines.docs import run_docs
@@ -135,5 +135,13 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
 
 async def run_with_janitor(*args: object, repo_root: Path, **kwargs: object):
     """Fire the once-per-day sweep, then run the docs pipeline."""
-    start_janitor(repo_root)
-    return await run_docs(*args, repo_root=repo_root, **kwargs)  # type: ignore[arg-type]
+    # Hold a strong reference so the task is not GC'd before the sweep finishes.
+    janitor = start_janitor(repo_root)
+    try:
+        return await run_docs(*args, repo_root=repo_root, **kwargs)  # type: ignore[arg-type]
+    finally:
+        await janitor
+        # The pipeline's AsyncSqliteSaver is closed by now — safe to vacuum.
+        await asyncio.to_thread(
+            vacuum_checkpoints, repo_root / ".docspatch" / "checkpoints"
+        )

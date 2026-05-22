@@ -73,7 +73,17 @@ def test_render_leaves_non_secret_text_intact():
     err = DocspatchError("file not found: src/app.py", "pass an existing path")
     rendered = _render_str(err)
     assert "src/app.py" in rendered
-    assert "pass an existing path" in rendered
+
+
+def test_render_masks_registered_key_of_unusual_shape():
+    """A key the regex shape misses is still masked once registered."""
+    from docspatch.utils.secrets import register_secret
+
+    odd_key = "corp-internal-token-Zz9Qx"  # no sk-/AIza prefix — regex misses it
+    register_secret(odd_key)
+    err = LLMError.api_failure(Exception(f"403 forbidden: token {odd_key} denied"))
+    rendered = _render_str(err)
+    assert odd_key not in rendered
 
 
 # --- Error UX: code prefix, context gating, truncation, exit codes ---

@@ -218,6 +218,27 @@ def test_accept_all_rejects_parse_failed_entry(tmp_path: Path) -> None:
     assert choice["rejected"] == ["mod.py::foo"]
 
 
+def test_renders_at_extreme_terminal_widths(tmp_path: Path) -> None:
+    """Review panel renders at width 20 and 200 without crashing."""
+    src = tmp_path / "mod.py"
+    src.write_text("def foo():\n    return 1\n")
+    entry = ReviewEntry(rel="mod.py", qualname="foo", docstring="Foo doc.")
+    ctx = RenderCtx(idx=1, total=2, accepted_count=0, rejected_count=0)
+    preview = build_previews([entry], tmp_path)[("mod.py", "foo")]
+
+    for width in (20, 200):
+        panel = render_review_panel(
+            entry=entry,
+            ctx=ctx,
+            preview=preview,
+            files=["mod.py", "other.py"],
+            siblings=["foo"],
+            console_width=width,
+        )
+        output = render_str(panel, width=width)
+        assert "foo" in output
+
+
 def test_parse_failed_panel_shows_raw_output() -> None:
     entry = ReviewEntry(rel="m.py", qualname="f", docstring="", parse_failed=True, raw_output="GARBAGE_123")
     output = render_str(

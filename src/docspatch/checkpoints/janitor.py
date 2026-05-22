@@ -1,4 +1,4 @@
-"""Sweep stale checkpoint artifacts: legacy spill files + sqlite vacuum. Once-per-day."""
+"""Sweep stale checkpoint artifacts: legacy spill files. Once-per-day."""
 
 import asyncio
 import re
@@ -16,7 +16,7 @@ PENDING_RE = re.compile(r"^pending-(?P<run_id>\d{8}-\d{6}-[a-f0-9]{6})\.json\.gz
 
 
 def sweep(checkpoint_dir: Path, now: float | None = None) -> None:
-    """Delete legacy ``pending-*.json.gz`` files older than TTL; vacuum the sqlite saver."""
+    """Delete legacy ``pending-*.json.gz`` files older than TTL."""
     if not checkpoint_dir.exists():
         return
     cutoff = (now or time.time()) - PENDING_TTL_DAYS * 86400
@@ -24,6 +24,11 @@ def sweep(checkpoint_dir: Path, now: float | None = None) -> None:
         if PENDING_RE.match(entry.name) and entry.stat().st_mtime < cutoff:
             entry.unlink(missing_ok=True)
 
+
+def vacuum_checkpoints(checkpoint_dir: Path) -> None:
+    """Vacuum the checkpoint sqlite. Caller must ensure no saver holds it open."""
+    # VACUUM needs an exclusive lock — kept out of the background sweep, which
+    # may run while an AsyncSqliteSaver has the db open.
     db_path = checkpoint_dir / "docs.sqlite"
     if db_path.exists():
         with sqlite3.connect(db_path) as conn:

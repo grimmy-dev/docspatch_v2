@@ -101,12 +101,19 @@ class GzipJSONCache[T](ABC):
             return None
         except OSError as exc:
             raise CacheError.read_failed(path, exc) from exc
-        payload, version = _unpack(raw, self.SCHEMA_VERSION)
-        if payload is None:
+        try:
+            payload, version = _unpack(raw, self.SCHEMA_VERSION)
+            state = self.from_dict(payload) if payload is not None else None
+        except (OSError, EOFError, ValueError, UnicodeDecodeError, KeyError, TypeError) as exc:
+            # Corrupt entry (bad gzip, truncated, unparseable JSON, bad shape):
+            # evict and report a miss so the pipeline rebuilds it.
+            self.evict_corrupt(entry, exc)
+            self._memo[path] = None
+            return None
+        if state is None:
             self.evict_stale(entry, version)
             self._memo[path] = None
             return None
-        state = self.from_dict(payload)
         self._memo[path] = state
         return state
 
@@ -144,6 +151,13 @@ class GzipJSONCache[T](ABC):
                 "Stale entries will be re-built on demand.[/yellow]"
             )
             self._schema_warned = True
+
+    def evict_corrupt(self, entry: Path, exc: Exception) -> None:
+        """Delete a corrupt entry and warn. The pipeline rebuilds it on the next run."""
+        entry.unlink(missing_ok=True)
+        console.print(
+            f"[yellow]{self.LABEL}: corrupt entry evicted ({exc}). It will be re-built.[/yellow]"
+        )
 
     @abstractmethod
     def to_dict(self, state: T) -> dict[str, Any]:
