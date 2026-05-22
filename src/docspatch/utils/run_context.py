@@ -1,12 +1,13 @@
 """RunContext — pipeline-scoped dependency holder constructed before any dp run."""
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from docspatch.context_store import ContextStore
+from docspatch.cache import ScoutCache
+from docspatch.constants import DEFAULT_BATCH_TOKEN_LIMIT, DEFAULT_CALL_TIMEOUT, DEFAULT_CONCURRENCY_LIMIT
 from docspatch.llm import LLMClient
-from docspatch.pipelines.scout import ScoutResult, scout_files
+from docspatch.pipelines.scout.graph import run_scout
+from docspatch.pipelines.scout.state import ScoutResult
 from docspatch.types.config import DocspatchConfig
 
 
@@ -19,29 +20,21 @@ class RunContext:
     """
 
     llm_client: LLMClient
-    ctx_store: ContextStore
+    ctx_store: ScoutCache
     config: DocspatchConfig
     progress_cb: Callable[[str], None] | None = field(default=None)
-    _semaphore: asyncio.Semaphore | None = field(default=None, init=False, repr=False)
-
-    @property
-    def semaphore(self) -> asyncio.Semaphore:
-        """Bounded fan-out for LLM calls. Created on first access (event loop safe)."""
-        if self._semaphore is None:
-            limit = max(1, int(self.config.concurrency_limit.value or 1))
-            self._semaphore = asyncio.Semaphore(limit)
-        return self._semaphore
 
     def progress(self, message: str) -> None:
         if self.progress_cb:
             self.progress_cb(message)
 
     async def scout(self, paths: list[str]) -> ScoutResult:
-        return await scout_files(
+        return await run_scout(
             paths,
             self.ctx_store,
             self.llm_client,
             progress_cb=self.progress_cb,
-            semaphore=self.semaphore,
-            batch_token_limit=int(self.config.batch_token_limit.value or 6000),
+            batch_token_limit=int(self.config.batch_token_limit.value or DEFAULT_BATCH_TOKEN_LIMIT),
+            concurrency_limit=int(self.config.concurrency_limit.value or DEFAULT_CONCURRENCY_LIMIT),
+            call_timeout=float(self.config.call_timeout.value or DEFAULT_CALL_TIMEOUT),
         )

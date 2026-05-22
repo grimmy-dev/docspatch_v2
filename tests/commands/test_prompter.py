@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import docspatch.commands.init as init_cmd
-from docspatch.pipelines.scout import ScanPlan
+from docspatch.pipelines.scout.state import ScanPlan
 from docspatch.ui import Prompter, QuestionaryPrompter, ScriptedPrompter
 
 

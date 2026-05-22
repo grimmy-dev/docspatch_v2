@@ -28,8 +28,8 @@ TIER_CATALOGUE: dict[Provider, list[TierInfo]] = {
     ],
     "gemini": [
         TierInfo("fast", "gemini-3.1-flash-lite", 0.25, 1.50, "⚡"),
-        TierInfo("balanced", "gemini-3-flash", 0.50, 3.00, "⚖️"),
-        TierInfo("best", "gemini-2.5-pro", 2.00, 12.00, "🏆"),
+        TierInfo("balanced", "gemini-3-flash-preview", 0.50, 3.00, "⚖️"),
+        TierInfo("best", "gemini-3.1-pro-preview", 2.00, 12.00, "🏆"),
     ],
 }
 
@@ -46,3 +46,16 @@ def tier_info(provider: str, tier: str) -> TierInfo:
 def resolve_tier_model(provider: str, tier: str) -> str:
     """Return the model string for ``(provider, tier)``."""
     return tier_info(provider, tier).model
+
+
+def tier_for_model(provider: str, model: str) -> Tier:
+    """Reverse-lookup the tier that owns ``model`` under ``provider``.
+
+    Raises:
+        ConfigError: When ``model`` is not in the catalogue for ``provider``.
+    """
+    p = as_provider(provider)
+    for entry in TIER_CATALOGUE[p]:
+        if entry.model == model:
+            return entry.tier
+    raise ConfigError.unknown_tier(model)

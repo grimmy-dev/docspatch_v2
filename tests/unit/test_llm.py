@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from docspatch.llm import TIER_CATALOGUE, LLMClient, RetryingChain
+from docspatch.llm import TIER_CATALOGUE, LLMClient, TypedRunnable
 from docspatch.types.llm import as_provider
 from docspatch.utils.errors import ConfigError, LLMError
 
@@ -135,37 +135,41 @@ def test_with_structured_output_delegates_to_llm(provider):
 
     result = client.with_structured_output(SampleSchema)
     mock_llm.with_structured_output.assert_called_once_with(SampleSchema)
-    assert isinstance(result, RetryingChain)
-    assert result._chain is mock_chain
+    assert isinstance(result, TypedRunnable)
+    assert result.chain is mock_chain
 
 
-# --- RetryingChain async retry + error wrapping ---
+# --- TypedRunnable async retry + error wrapping ---
+
+
+def make_gate(max_attempts: int = 3):
+    from docspatch.utils.retry import RateLimitGate, RetryPolicy
+
+    return RateLimitGate(RetryPolicy(max_attempts=max_attempts, base_delay=0.0))
 
 
 def test_retrying_chain_returns_value_on_success():
     import asyncio
     from unittest.mock import AsyncMock
 
-    from docspatch.llm import RetryingChain
+    from docspatch.llm import TypedRunnable
 
     chain = MagicMock()
     chain.ainvoke = AsyncMock(return_value="ok")
-    rc = RetryingChain(chain)
-    assert asyncio.run(rc.ainvoke("prompt")) == "ok"
+    rc = TypedRunnable(chain, make_gate())
+    assert asyncio.run(rc.ainvoke("prompt"))[0] == "ok"
 
 
-def test_retrying_chain_retries_transient(monkeypatch):
+def test_retrying_chain_retries_transient():
     import asyncio
     from unittest.mock import AsyncMock
 
-    from docspatch.llm import RetryingChain
-    from docspatch.utils.retry import RetryPolicy
+    from docspatch.llm import TypedRunnable
 
-    monkeypatch.setattr("docspatch.llm.client.LLM_RETRY", RetryPolicy(max_attempts=3, base_delay=0.0))
     chain = MagicMock()
     chain.ainvoke = AsyncMock(side_effect=[Exception("rate_limit"), "ok"])
-    rc = RetryingChain(chain)
-    assert asyncio.run(rc.ainvoke("prompt")) == "ok"
+    rc = TypedRunnable(chain, make_gate())
+    assert asyncio.run(rc.ainvoke("prompt"))[0] == "ok"
     assert chain.ainvoke.await_count == 2
 
 
@@ -173,25 +177,100 @@ def test_retrying_chain_wraps_non_transient_as_llm_error():
     import asyncio
     from unittest.mock import AsyncMock
 
-    from docspatch.llm import RetryingChain
+    from docspatch.llm import TypedRunnable
 
     chain = MagicMock()
     chain.ainvoke = AsyncMock(side_effect=Exception("context_length_exceeded"))
-    rc = RetryingChain(chain)
+    rc = TypedRunnable(chain, make_gate())
     with pytest.raises(LLMError):
         asyncio.run(rc.ainvoke("prompt"))
 
 
-def test_retrying_chain_wraps_exhaustion_as_llm_error(monkeypatch):
+def test_retrying_chain_wraps_exhaustion_as_llm_error():
     import asyncio
     from unittest.mock import AsyncMock
 
-    from docspatch.llm import RetryingChain
-    from docspatch.utils.retry import RetryPolicy
+    from docspatch.llm import TypedRunnable
 
-    monkeypatch.setattr("docspatch.llm.client.LLM_RETRY", RetryPolicy(max_attempts=3, base_delay=0.0))
     chain = MagicMock()
     chain.ainvoke = AsyncMock(side_effect=Exception("429 rate_limit"))
-    rc = RetryingChain(chain)
+    rc = TypedRunnable(chain, make_gate())
     with pytest.raises(LLMError):
         asyncio.run(rc.ainvoke("prompt"))
+
+
+def test_token_usage_adds_and_totals():
+    from docspatch.llm.runnable import TokenUsage, _collected_usage
+
+    summed = TokenUsage(10, 4) + TokenUsage(5, 1)
+    assert (summed.input_tokens, summed.output_tokens, summed.total) == (15, 5, 20)
+
+    class FakeHandler:
+        usage_metadata = {"m": {"input_tokens": 7, "output_tokens": 2}}
+
+    assert _collected_usage(FakeHandler()) == TokenUsage(7, 2)
+
+
+# --- TypedRunnable parse-failure retry-once-then-fail ---
+
+
+def test_typed_runnable_retries_parse_failure_once_then_succeeds():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from langchain_core.exceptions import OutputParserException
+
+    from docspatch.llm import TypedRunnable
+    from docspatch.llm.runnable import PARSE_RETRY_SUFFIX
+
+    chain = MagicMock()
+    chain.ainvoke = AsyncMock(side_effect=[OutputParserException("bad json"), "ok"])
+    rc = TypedRunnable(chain, make_gate())
+
+    assert asyncio.run(rc.ainvoke("prompt"))[0] == "ok"
+    assert chain.ainvoke.await_count == 2
+    # The second call carries the corrective suffix.
+    assert chain.ainvoke.await_args_list[1].args[0].endswith(PARSE_RETRY_SUFFIX)
+
+
+def test_typed_runnable_raises_parse_failed_after_second_failure():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from langchain_core.exceptions import OutputParserException
+
+    from docspatch.llm import TypedRunnable
+    from docspatch.utils.errors import ParseFailed
+
+    chain = MagicMock()
+    chain.ainvoke = AsyncMock(side_effect=OutputParserException("still bad"))
+    rc = TypedRunnable(chain, make_gate())
+
+    with pytest.raises(ParseFailed) as excinfo:
+        asyncio.run(rc.ainvoke("prompt"))
+    assert chain.ainvoke.await_count == 2  # exactly one retry, no loop
+    assert "still bad" in excinfo.value.raw_output
+
+
+def test_typed_runnable_treats_pydantic_validation_error_as_parse_failure():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from pydantic import BaseModel
+
+    from docspatch.llm import TypedRunnable
+    from docspatch.utils.errors import ParseFailed
+
+    class Schema(BaseModel):
+        answer: str
+
+    def raise_validation(*_a, **_kw):
+        Schema(answer=123)  # type: ignore[arg-type]  # triggers pydantic ValidationError
+
+    chain = MagicMock()
+    chain.ainvoke = AsyncMock(side_effect=raise_validation)
+    rc = TypedRunnable(chain, make_gate())
+
+    with pytest.raises(ParseFailed):
+        asyncio.run(rc.ainvoke("prompt"))
+    assert chain.ainvoke.await_count == 2

@@ -6,45 +6,14 @@ from langchain_core.runnables import Runnable
 
 from docspatch.llm.catalogue import resolve_tier_model
 from docspatch.llm.factory import build_llm, build_validator_llm
+from docspatch.llm.runnable import LLM_RETRY, TypedRunnable, is_transient, wrap_llm_error
 from docspatch.types.llm import Provider, Tier, as_provider, as_tier
 from docspatch.utils import key_cache
-from docspatch.utils.errors import LLMError, TransientExhausted
-from docspatch.utils.retry import OnRetry, RetryPolicy, retry_async
-
-LLM_RETRY = RetryPolicy(max_attempts=3, base_delay=2.0)
-TRANSIENT_MARKERS = ("rate_limit", "429", "503", "502", "timeout", "overloaded")
+from docspatch.utils.retry import OnRetry, RateLimitGate
 
 RetryCallback = OnRetry
 
-
-def is_transient(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(marker in msg for marker in TRANSIENT_MARKERS)
-
-
-def wrap_llm_error(exc: Exception) -> LLMError:
-    if is_transient(exc):
-        return TransientExhausted.after(LLM_RETRY.max_attempts, exc)
-    return LLMError.api_failure(exc)
-
-
-class RetryingChain[T]:
-    """Wraps a LangChain structured chain so ``ainvoke`` retries transient errors."""
-
-    def __init__(self, chain: Runnable[str, T], retry_cb: RetryCallback | None = None) -> None:
-        self._chain = chain
-        self._retry_cb = retry_cb
-
-    async def ainvoke(self, prompt: str) -> T:
-        try:
-            return await retry_async(
-                lambda: self._chain.ainvoke(prompt),
-                is_retriable=is_transient,
-                policy=LLM_RETRY,
-                on_retry=self._retry_cb,
-            )
-        except Exception as exc:
-            raise wrap_llm_error(exc) from exc
+__all__ = ["LLM_RETRY", "LLMClient", "RetryCallback", "is_transient", "wrap_llm_error"]
 
 
 class LLMClient:
@@ -62,6 +31,7 @@ class LLMClient:
         self._api_key = api_key
         self.llm = build_llm(self.provider, api_key, self.generator_tier)
         self.retry_cb = retry_cb
+        self.gate = RateLimitGate(LLM_RETRY, on_retry=retry_cb)
 
     @property
     def scout_model(self) -> str:
@@ -88,9 +58,9 @@ class LLMClient:
         key_cache.mark_validated(self.provider, self._api_key)
         return True
 
-    def with_structured_output[T](self, schema: type[T]) -> RetryingChain[T]:
+    def with_structured_output[T](self, schema: type[T]) -> TypedRunnable[T]:
         base_chain = cast(
             Runnable[str, T],
             self.llm.with_structured_output(schema),
         )
-        return RetryingChain[T](base_chain, retry_cb=self.retry_cb)
+        return TypedRunnable[T](base_chain, self.gate)

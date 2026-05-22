@@ -2,11 +2,15 @@
 
 from pathlib import Path
 
-from docspatch.context_store import ContextStore
+from docspatch.cache import ScoutCache
 from docspatch.pipelines.scout.pipeline import pre_build
 from docspatch.ui import Prompter, QuestionaryPrompter, console
 from docspatch.utils.config import ConfigStore, default_store
-from docspatch.utils.selection import gather_selections, persist, select_license
+from docspatch.utils.ignore import ensure_docspatch_ignored
+from docspatch.utils.logging import get_logger
+from docspatch.utils.selection import ensure_configured, select_license
+
+log = get_logger("init")
 
 
 def run(
@@ -28,14 +32,16 @@ def run(
     p = prompter or QuestionaryPrompter()
     store = resolve_store(repo_root, global_config_path)
 
-    selections = gather_selections(store, p, reconfigure=reconfigure)
+    log.debug("init starting for repo: %s", repo_root)
+    selections = ensure_configured(store, p, reconfigure=reconfigure)
     select_license(repo_root, p, reconfigure=reconfigure)
-    persist(store, selections)
+    log.debug("config + license resolved; provider=%s", selections.provider)
 
-    ctx_store = ContextStore(repo_root)
-    ctx_store.ensure_gitignore()
+    ctx_store = ScoutCache(repo_root)
+    ensure_docspatch_ignored(repo_root)
     console.print("[green]✓[/green] .docspatch added to .gitignore")
 
+    log.debug("starting scout pre-build")
     pre_build(repo_root, ctx_store, store, selections.provider, selections.api_key, p)
 
 

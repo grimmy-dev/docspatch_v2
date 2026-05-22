@@ -1,19 +1,20 @@
-"""Cache-aware planning. Decides which files need scouting and the prompt cost."""
+"""Cache-aware planning: which files need scouting, and at what token cost."""
 
+from collections import defaultdict
 from collections.abc import Iterable
+from pathlib import Path
 
-from docspatch.context_store import ContextStore
-from docspatch.pipelines.scout.types import FileMiss, ScanPlan
-from docspatch.utils.sourcer import Sourcer
+from docspatch.cache import ScoutCache
+from docspatch.pipelines.scout.state import FileMiss, ScanPlan
+from docspatch.source import compress, estimate_tokens, file_hash
+from docspatch.types.source import FileSummary
 
 
-def partition_paths(paths: Iterable[str], ctx_store: ContextStore) -> tuple[list[str], list[FileMiss]]:
-    """Split ``paths`` into cache hits (path only) and misses (with source+hash).
+def partition_paths(paths: Iterable[str], ctx_store: ScoutCache) -> tuple[list[str], list[FileMiss]]:
+    """Split ``paths`` into cache hits (path only) and misses (with source + hash).
 
-    Paths are repo-relative POSIX strings (the convention used by
-    :class:`GitReader`). Source is read via ``ctx_store.root / path``.
-    Files unreadable on disk are silently skipped — same policy as the scout
-    runner, since they cannot be summarised either way.
+    Paths are repo-relative POSIX strings; source is read via ``ctx_store.root``.
+    Files unreadable on disk are skipped — they cannot be summarised anyway.
     """
     hits: list[str] = []
     misses: list[FileMiss] = []
@@ -22,25 +23,43 @@ def partition_paths(paths: Iterable[str], ctx_store: ContextStore) -> tuple[list
             source = (ctx_store.root / path).read_text(encoding="utf-8")
         except OSError:
             continue
-        content_hash = Sourcer.hash(source)
-        cached = ctx_store.get_summary(path)
+        content_hash = file_hash(source)
+        cached = ctx_store.get(path)
         if cached and cached.content_hash == content_hash:
             hits.append(path)
         else:
-            misses.append(FileMiss(path, source, Sourcer.compress(source), content_hash))
+            misses.append(FileMiss(path, source, compress(source), content_hash))
     return hits, misses
 
 
-def plan_uncached(paths: Iterable[str], ctx_store: ContextStore) -> ScanPlan:
-    """Build a :class:`ScanPlan` for ``paths`` against the current cache.
-
-    Token estimate covers uncached files only — cached entries are skipped by
-    the runner and must not show up in cost projections.
-    """
+def plan_uncached(paths: Iterable[str], ctx_store: ScoutCache) -> ScanPlan:
+    """Build a :class:`ScanPlan` for ``paths``. Token estimate covers misses only."""
     hits, misses = partition_paths(paths, ctx_store)
-    token_estimate = sum(Sourcer.estimate_tokens(m.compressed) for m in misses)
+    token_estimate = sum(estimate_tokens(m.compressed) for m in misses)
     return ScanPlan(
         uncached=tuple(m.path for m in misses),
         cached=tuple(hits),
         token_estimate=token_estimate,
     )
+
+
+def build_structured_context(cache: ScoutCache, files: list[str]) -> str:
+    """Render cached scout summaries grouped by directory for downstream prompts."""
+    by_dir: dict[str, list[FileSummary]] = defaultdict(list)
+    for path in files:
+        summary = cache.get(path)
+        if summary:
+            by_dir[str(Path(path).parent)].append(summary)
+
+    lines: list[str] = []
+    for directory in sorted(by_dir):
+        lines.append(f"# {directory}")
+        for summary in sorted(by_dir[directory], key=lambda s: s.path):
+            lines.append(f"  {Path(summary.path).name}")
+            lines.append(f"    {summary.summary}")
+            for fn in summary.functions:
+                note = fn.llm_summary or fn.docstring
+                suffix = f" — {note.splitlines()[0]}" if note else ""
+                lines.append(f"    - {fn.name}{suffix}")
+        lines.append("")
+    return "\n".join(lines)

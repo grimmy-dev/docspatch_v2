@@ -9,7 +9,7 @@ import tomllib
 from unittest.mock import AsyncMock, MagicMock
 
 import docspatch.commands.init as init_cmd
-from docspatch.pipelines.scout import ScanPlan
+from docspatch.pipelines.scout.state import ScanPlan
 from docspatch.types.config import DocspatchConfig, ScopedValue
 from docspatch.ui import ScriptedPrompter
 
@@ -233,7 +233,7 @@ def test_dp_init_adds_docspatch_to_gitignore(monkeypatch, tmp_path):
 
 def test_dp_init_skips_scout_when_context_up_to_date(monkeypatch, tmp_path):
     mock_scout = AsyncMock()
-    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.scout_files", mock_scout)
+    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.run_scout", mock_scout)
     _patch_env(monkeypatch, context_up_to_date=True)
 
     init_cmd.run(
@@ -250,7 +250,7 @@ def test_dp_init_skips_scout_when_context_up_to_date(monkeypatch, tmp_path):
 
 def test_dp_init_skip_choice_makes_no_llm_call(monkeypatch, tmp_path):
     mock_scout = AsyncMock()
-    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.scout_files", mock_scout)
+    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.run_scout", mock_scout)
 
     mock_reader = MagicMock()
     mock_reader.list_tracked_files.return_value = []

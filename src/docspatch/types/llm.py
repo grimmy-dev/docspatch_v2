@@ -5,13 +5,11 @@ types and the only safe way to obtain values of those types stay co-located —
 callers import one module, not two.
 """
 
-from typing import Literal, Protocol, TypeVar, cast, get_args
+from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, Field
 
 from docspatch.utils.errors import ConfigError
-
-T_co = TypeVar("T_co", covariant=True)
 
 Provider = Literal["anthropic", "openai", "gemini"]
 Tier = Literal["fast", "balanced", "best"]
@@ -29,12 +27,6 @@ def as_tier(value: str) -> Tier:
     if value not in get_args(Tier):
         raise ConfigError.unknown_tier(value)
     return cast(Tier, value)
-
-
-class StructuredChain(Protocol[T_co]):
-    """Typed async chain returned by ``LLMClient.with_structured_output()``."""
-
-    async def ainvoke(self, prompt: str) -> T_co: ...
 
 
 class FileSummaryOutput(BaseModel):
@@ -56,10 +48,16 @@ class BatchSummaryOutput(BaseModel):
     )
 
 
-class DocstringOutput(BaseModel):
-    """Google-style docstring for a function."""
+class BatchDocstringOutput(BaseModel):
+    """Docstrings for a batch of functions, keyed by ``<rel>::<qualname>`` exactly as given in the prompt."""
 
-    docstring: str = Field(description="Google-style docstring body, no triple quotes.")
+    docstrings: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Mapping keyed by `<rel>::<qualname>` ids from the `Expected ids` list. "
+            "Value = Google-style docstring body, no triple quotes."
+        ),
+    )
 
 
 class ChangelogEntry(BaseModel):

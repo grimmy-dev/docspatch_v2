@@ -1,0 +1,73 @@
+"""Data shapes for the scout pipeline.
+
+``ScoutBatch`` and ``ScoutResult`` travel through the checkpointer, so they are
+Pydantic models. ``FileMiss`` and ``ScanPlan`` never enter graph state.
+"""
+
+from dataclasses import dataclass
+from operator import add
+from typing import Annotated, NamedTuple, TypedDict
+
+from pydantic import BaseModel, ConfigDict
+
+
+class FileMiss(NamedTuple):
+    """A file with no fresh cached summary. Source read and compressed upfront."""
+
+    path: str
+    source: str
+    compressed: str
+    content_hash: str
+
+
+@dataclass(frozen=True)
+class ScanPlan:
+    """Outcome of a pre-scout cache scan: which files are uncached and the cost."""
+
+    uncached: tuple[str, ...]
+    cached: tuple[str, ...]
+    token_estimate: int
+
+    @property
+    def uncached_count(self) -> int:
+        return len(self.uncached)
+
+    @property
+    def cached_count(self) -> int:
+        return len(self.cached)
+
+    @property
+    def all_current(self) -> bool:
+        return not self.uncached
+
+
+class ScoutBatch(BaseModel):
+    """One LLM call's worth of files. Carries paths only; bodies live in context."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    paths: list[str]
+
+
+class ScoutResult(BaseModel):
+    """Counts for one batch, or for a whole run once aggregated.
+
+    Token counts are real provider usage, summed across the batch's calls.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    scouted: int
+    skipped: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    unresolved: tuple[str, ...] = ()
+
+
+class ScoutState(TypedDict, total=False):
+    """Summarise-graph state. Reducers accumulate worker output across waves."""
+
+    batches: list[ScoutBatch]
+    completed_batches: Annotated[list[int], add]
+    results: Annotated[list[ScoutResult], add]

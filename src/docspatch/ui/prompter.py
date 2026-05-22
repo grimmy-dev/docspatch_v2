@@ -28,6 +28,7 @@ class Prompter(Protocol):
     def password(self, question: str) -> str: ...
     def confirm(self, question: str, default: bool = True) -> bool: ...
     def checkbox(self, question: str, choices: Choices) -> list[object]: ...
+    def text(self, question: str, default: str = "") -> str: ...
 
 
 class QuestionaryPrompter:
@@ -45,6 +46,10 @@ class QuestionaryPrompter:
 
     def checkbox(self, question: str, choices: Choices) -> list[object]:
         return questionary.checkbox(question, choices=_to_questionary_choices(choices)).ask() or []
+
+    def text(self, question: str, default: str = "") -> str:
+        result = questionary.text(question, default=default).ask()
+        return "" if result is None else str(result)
 
 
 class ScriptedPrompter:
@@ -74,6 +79,10 @@ class ScriptedPrompter:
     def checkbox(self, question: str, choices: Choices) -> list[object]:
         value = self._next(question)
         return list(cast(Any, value)) if value is not None else []
+
+    def text(self, question: str, default: str = "") -> str:
+        value = self._next(question)
+        return "" if value is None else str(value)
 
 
 async def aprompt[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T:

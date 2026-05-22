@@ -29,3 +29,4 @@ class DocspatchConfig:
     tone: ScopedValue[str | None] = field(default_factory=lambda: _default("tone"))
     batch_token_limit: ScopedValue[int] = field(default_factory=lambda: _default("batch_token_limit"))
     concurrency_limit: ScopedValue[int] = field(default_factory=lambda: _default("concurrency_limit"))
+    call_timeout: ScopedValue[int] = field(default_factory=lambda: _default("call_timeout"))

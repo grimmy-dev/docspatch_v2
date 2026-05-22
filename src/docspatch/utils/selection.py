@@ -33,6 +33,20 @@ class Selections:
     tone: str
 
 
+def ensure_configured(store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> Selections:
+    """Single surfacer: gather provider/key/model/tone, persist, return ``Selections``.
+
+    Reused by any command that needs an authenticated LLM (``dp init``,
+    ``dp docs``, future pipelines). Prompts only for fields not already on
+    disk; ``reconfigure=True`` forces every prompt. Persistence happens once,
+    after every prompt completes, so a Ctrl-C mid-prompt leaves config
+    untouched.
+    """
+    selections = gather_selections(store, p, reconfigure=reconfigure)
+    persist(store, selections)
+    return selections
+
+
 def gather_selections(store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> Selections:
     """Collect every config field needed by ``dp init`` in deterministic order."""
     provider = select_provider(store, p, reconfigure=reconfigure)
@@ -171,7 +185,7 @@ def ask_tier(provider: str, p: Prompter) -> str:
         )
         choices[label] = t.tier
 
-    tier = str(p.select("Select generator tier:", choices, default="balanced"))
+    tier = str(p.select("Select generator tier:", choices))
     model = resolve_tier_model(provider, tier)
     console.print(f"[green]✓[/green] generator: {model} ({tier})")
     return model

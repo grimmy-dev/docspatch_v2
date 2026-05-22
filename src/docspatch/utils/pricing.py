@@ -55,3 +55,16 @@ def estimate_cost(
     input_cost = (input_tokens / 1_000_000) * info.price_input_per_1m
     output_cost = (output_tokens / 1_000_000) * info.price_output_per_1m
     return CostEstimate(input_tokens, output_tokens, input_cost, output_cost)
+
+
+def actual_cost(provider: str, tier: str, input_tokens: int, output_tokens: int) -> CostEstimate:
+    """Dollar cost from measured input *and* output tokens — no projection.
+
+    Used by the end-of-run summary, where both token counts are known for real.
+    """
+    if input_tokens < 0 or output_tokens < 0:
+        raise ConfigError.must_be_non_negative("tokens", min(input_tokens, output_tokens))
+    info = tier_info(provider, tier)
+    input_cost = (input_tokens / 1_000_000) * info.price_input_per_1m
+    output_cost = (output_tokens / 1_000_000) * info.price_output_per_1m
+    return CostEstimate(input_tokens, output_tokens, input_cost, output_cost)

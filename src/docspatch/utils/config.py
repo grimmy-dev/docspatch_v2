@@ -138,6 +138,7 @@ def load_config(global_path: Path | None = None, repo_path: Path | None = None) 
         tone=resolve("tone"),
         batch_token_limit=resolve("batch_token_limit"),
         concurrency_limit=resolve("concurrency_limit"),
+        call_timeout=resolve("call_timeout"),
     )
 
 
