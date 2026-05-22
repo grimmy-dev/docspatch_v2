@@ -37,8 +37,10 @@ def merge_function_summaries(
 
 
 async def store_summary(cache: ScoutCache, miss: FileMiss, per_file: FileSummaryOutput) -> None:
-    """Persist the merged summary for ``miss`` to the cache (off the event loop)."""
-    functions = extract_function_metadata(miss.source)
+    """Persist the merged summary for ``miss`` to the cache."""
+    # Parse and gzip-write off the loop — this runs inside the concurrent batch
+    # worker, so blocking here would stall other batches' in-flight LLM calls.
+    functions = await asyncio.to_thread(extract_function_metadata, miss.source)
     merged = merge_function_summaries(functions, per_file.function_summaries)
     summary = FileSummary(
         path=miss.path,

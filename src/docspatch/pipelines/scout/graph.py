@@ -91,7 +91,9 @@ async def run_scout(
         switch_handler: Optional callback invoked on transient exhaustion.
         run_id: Checkpoint thread id; generated when omitted.
     """
-    hits, misses = partition_paths(paths, ctx_store)
+    # partition_paths reads + libcst-compresses every file; offload so the
+    # parsing never blocks the loop.
+    hits, misses = await asyncio.to_thread(partition_paths, paths, ctx_store)
     for path in hits:
         if progress_cb:
             progress_cb(path)
