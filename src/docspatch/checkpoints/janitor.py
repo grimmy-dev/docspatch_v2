@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from docspatch.checkpoints.manifest import sweep_run_manifests
 from docspatch.utils.config import default_store, read_toml
 
 PENDING_TTL_DAYS = 2
@@ -36,9 +37,10 @@ def vacuum_checkpoints(checkpoint_dir: Path) -> None:
 
 
 def safe_sweep(repo_root: Path) -> None:
-    """Run :func:`sweep`; log any error and swallow it."""
+    """Run :func:`sweep` + manifest TTL sweep; log any error and swallow it."""
     try:
         sweep(repo_root / ".docspatch" / "checkpoints")
+        sweep_run_manifests(repo_root)
     except Exception as exc:  # noqa: BLE001 — janitor must never crash the command
         try:
             log = repo_root / ".docspatch" / "janitor.log"

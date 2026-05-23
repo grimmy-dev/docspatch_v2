@@ -125,8 +125,17 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
             new_hash = file_hash(new_source)
             journal.append(rel, new_hash)
             if ctx.cache is not None:
+                # Stat after write so next run fast-skips via size+mtime.
+                st = path.stat()
                 ctx.cache.set(
-                    rel, FileDocState(path=rel, file_hash=new_hash, functions=scan_functions(new_source))
+                    rel,
+                    FileDocState(
+                        path=rel,
+                        file_hash=new_hash,
+                        functions=scan_functions(new_source),
+                        size=st.st_size,
+                        mtime_ns=st.st_mtime_ns,
+                    ),
                 )
             committed.append(rel)
 

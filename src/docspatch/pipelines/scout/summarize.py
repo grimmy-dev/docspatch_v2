@@ -42,11 +42,19 @@ async def store_summary(cache: ScoutCache, miss: FileMiss, per_file: FileSummary
     # worker, so blocking here would stall other batches' in-flight LLM calls.
     functions = await asyncio.to_thread(extract_function_metadata, miss.source)
     merged = merge_function_summaries(functions, per_file.function_summaries)
+    # Stat the file so the next run can fast-skip via size+mtime.
+    try:
+        st = (cache.root / miss.path).stat()
+        size, mtime_ns = st.st_size, st.st_mtime_ns
+    except OSError:
+        size, mtime_ns = 0, 0
     summary = FileSummary(
         path=miss.path,
         summary=per_file.summary,
         functions=merged,
         content_hash=miss.content_hash,
+        size=size,
+        mtime_ns=mtime_ns,
     )
     await asyncio.to_thread(cache.set, miss.path, summary)
 

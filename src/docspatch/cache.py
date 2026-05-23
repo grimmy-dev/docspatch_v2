@@ -189,6 +189,9 @@ class FileDocState:
     path: str
     file_hash: str
     functions: dict[str, FunctionDocState] = field(default_factory=dict)
+    # size + mtime_ns power constant-time fast-skip before any read/parse.
+    size: int = 0
+    mtime_ns: int = 0
 
 
 class DocsCache(GzipJSONCache[FileDocState]):
@@ -206,6 +209,8 @@ class DocsCache(GzipJSONCache[FileDocState]):
             path=payload.get("path", ""),
             file_hash=payload.get("file_hash", ""),
             functions={name: FunctionDocState(**fn) for name, fn in payload.get("functions", {}).items()},
+            size=payload.get("size", 0),
+            mtime_ns=payload.get("mtime_ns", 0),
         )
 
     def needs_rerun(self, path: str, current: dict[str, FunctionDocState]) -> list[str]:
@@ -238,6 +243,8 @@ class ScoutCache(GzipJSONCache[FileSummary]):
             "path": state.path,
             "summary": state.summary,
             "content_hash": state.content_hash,
+            "size": state.size,
+            "mtime_ns": state.mtime_ns,
             "functions": [
                 {
                     "name": fn.name,
@@ -256,6 +263,8 @@ class ScoutCache(GzipJSONCache[FileSummary]):
             path=payload.get("path", ""),
             summary=payload.get("summary", ""),
             content_hash=payload.get("content_hash", ""),
+            size=payload.get("size", 0),
+            mtime_ns=payload.get("mtime_ns", 0),
             functions=[
                 FunctionMetadata(
                     name=fn.get("name", ""),

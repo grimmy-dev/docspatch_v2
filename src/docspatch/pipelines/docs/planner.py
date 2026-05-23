@@ -49,6 +49,16 @@ def collect_targets(
     for path in paths:
         abs_path = path.resolve()
         rel = str(abs_path.relative_to(root))
+        # Fast-skip: matching size+mtime → cached funcs current, no read/parse.
+        if not update and cache is not None:
+            try:
+                st = abs_path.stat()
+            except OSError:
+                continue
+            cached = cache.get(rel)
+            if cached and cached.size == st.st_size and cached.mtime_ns == st.st_mtime_ns:
+                cache_hits += sum(1 for fn in cached.functions.values() if fn.has_docstring)
+                continue
         try:
             source = abs_path.read_text()
         except OSError:

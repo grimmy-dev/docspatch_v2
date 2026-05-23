@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 
 from docspatch.cache import ScoutCache
@@ -19,16 +20,32 @@ def partition_paths(paths: Iterable[str], ctx_store: ScoutCache) -> tuple[list[s
     hits: list[str] = []
     misses: list[FileMiss] = []
     for path in paths:
+        abs_path = ctx_store.root / path
         try:
-            source = (ctx_store.root / path).read_text(encoding="utf-8")
+            st = abs_path.stat()
         except OSError:
             continue
-        content_hash = file_hash(source)
         cached = ctx_store.get(path)
-        if cached and cached.content_hash == content_hash:
+        # Fast-skip: matching size+mtime → assume unchanged, no read/hash/parse.
+        if cached and cached.size == st.st_size and cached.mtime_ns == st.st_mtime_ns:
             hits.append(path)
-        else:
-            misses.append(FileMiss(path, source, compress(source), content_hash))
+            continue
+        try:
+            # Read bytes once: hash on bytes, decode for compress — no encode round-trip.
+            raw = abs_path.read_bytes()
+        except OSError:
+            continue
+        content_hash = file_hash(raw)
+        if cached and cached.content_hash == content_hash:
+            # Hash matches but stat drifted; refresh stat so next run fast-skips.
+            ctx_store.set(path, replace(cached, size=st.st_size, mtime_ns=st.st_mtime_ns))
+            hits.append(path)
+            continue
+        try:
+            source = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        misses.append(FileMiss(path, source, compress(source), content_hash))
     return hits, misses
 
 
@@ -40,6 +57,7 @@ def plan_uncached(paths: Iterable[str], ctx_store: ScoutCache) -> ScanPlan:
         uncached=tuple(m.path for m in misses),
         cached=tuple(hits),
         token_estimate=token_estimate,
+        misses=tuple(misses),
     )
 
 

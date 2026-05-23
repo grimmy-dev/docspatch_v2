@@ -107,6 +107,10 @@ class ConfigError(DocspatchError):
         return cls(f"Invalid {provider} API key.", hint="Check your key and try again.")
 
     @classmethod
+    def missing_api_key(cls, provider: str) -> ConfigError:
+        return cls(f"No API key configured for {provider}.", hint=f"Run `dp config set api_key_{provider} <key>`.")
+
+    @classmethod
     def key_validation_failed(cls, exc: Exception) -> ConfigError:
         return cls(f"Key validation failed: {exc}", hint="Check your key.")
 

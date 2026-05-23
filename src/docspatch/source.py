@@ -35,9 +35,10 @@ def scan_functions_in(tree: ast.AST) -> dict[str, FunctionDocState]:
     return result
 
 
-def file_hash(source: str) -> str:
-    """SHA-256 of raw source. Cheap fast-skip when nothing changed."""
-    return hashlib.sha256(source.encode()).hexdigest()
+def file_hash(source: str | bytes) -> str:
+    """SHA-256 of raw source; accepts bytes to skip encode round-trips."""
+    data = source if isinstance(source, bytes) else source.encode()
+    return hashlib.sha256(data).hexdigest()
 
 
 def hash_function(node: FunctionNode) -> str:

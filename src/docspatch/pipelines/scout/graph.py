@@ -19,7 +19,7 @@ from docspatch.constants import DEFAULT_BATCH_TOKEN_LIMIT, DEFAULT_CALL_TIMEOUT,
 from docspatch.llm import LLMClient
 from docspatch.pipelines.scout.context import ProgressCb, ScoutContext, SwitchHandler, load_state
 from docspatch.pipelines.scout.planner import partition_paths
-from docspatch.pipelines.scout.state import ScoutBatch, ScoutResult, ScoutState
+from docspatch.pipelines.scout.state import FileMiss, ScoutBatch, ScoutResult, ScoutState
 from docspatch.pipelines.scout.summarize import summarize_batch
 from docspatch.source import estimate_tokens
 from docspatch.utils.batcher import greedy_batches
@@ -73,6 +73,7 @@ async def run_scout(
     call_timeout: float = DEFAULT_CALL_TIMEOUT,
     switch_handler: SwitchHandler | None = None,
     run_id: str | None = None,
+    precomputed_misses: list[FileMiss] | None = None,
 ) -> ScoutResult:
     """Summarise ``paths`` through the checkpointed scout graph, skipping cache hits.
 
@@ -91,9 +92,11 @@ async def run_scout(
         switch_handler: Optional callback invoked on transient exhaustion.
         run_id: Checkpoint thread id; generated when omitted.
     """
-    # partition_paths reads + libcst-compresses every file; offload so the
-    # parsing never blocks the loop.
-    hits, misses = await asyncio.to_thread(partition_paths, paths, ctx_store)
+    # Reuse planner output when given; otherwise read+compress here (offloaded).
+    if precomputed_misses is not None:
+        hits, misses = [], list(precomputed_misses)
+    else:
+        hits, misses = await asyncio.to_thread(partition_paths, paths, ctx_store)
     for path in hits:
         if progress_cb:
             progress_cb(path)

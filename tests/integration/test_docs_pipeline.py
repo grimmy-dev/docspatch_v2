@@ -1255,3 +1255,52 @@ def test_hanging_call_without_switch_raises(tmp_path: Path) -> None:
                 auto_confirm=True,
             )
         )
+
+
+def test_completed_run_rerun_is_zero_llm_calls(tmp_path: Path) -> None:
+    """Cache populated by a clean run → next run on the same files makes no LLM calls."""
+    src = tmp_path / "m.py"
+    src.write_text("def foo():\n    return 1\n")
+
+    cache = DocsCache(tmp_path)
+    first = FakeGenerator("done.")
+    go([src], first, tmp_path=tmp_path, cache=cache)
+    assert first.calls, "first run should have generated"
+
+    second = FakeGenerator("done.")
+    go([src], second, tmp_path=tmp_path, cache=cache)
+    assert second.calls == []
+
+
+def test_resume_twice_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Killing once, then resuming twice with the same run_id produces one finished file."""
+    import docspatch.pipelines.docs.commit as commit_mod
+
+    src = tmp_path / "m.py"
+    src.write_text("def f():\n    return 1\n")
+    run_id = "20260523-000000-feedbe"
+
+    real = commit_mod.insert_docstrings
+    calls = [0]
+
+    def once_kill(source: str, *, items: list) -> str:
+        calls[0] += 1
+        if calls[0] == 1:
+            raise KeyboardInterrupt
+        return real(source, items=items)
+
+    monkeypatch.setattr(commit_mod, "insert_docstrings", once_kill)
+    with contextlib.suppress(KeyboardInterrupt):
+        go([src], FakeGenerator("d."), tmp_path=tmp_path, run_id=run_id)
+
+    monkeypatch.setattr(commit_mod, "insert_docstrings", real)
+    a = FakeGenerator("d.")
+    go([src], a, tmp_path=tmp_path, run_id=run_id)
+    after_first_resume = src.read_text()
+
+    b = FakeGenerator("d.")
+    go([src], b, tmp_path=tmp_path, run_id=run_id)
+
+    assert a.calls == []  # resume reused checkpoint
+    assert b.calls == []  # second resume found no incomplete run; cache covered everything
+    assert src.read_text() == after_first_resume

@@ -121,6 +121,9 @@ class FileSummary:
     summary: str
     functions: list[FunctionMetadata] = field(default_factory=list)
     content_hash: str = ""
+    # size + mtime_ns power constant-time fast-skip before any read/parse.
+    size: int = 0
+    mtime_ns: int = 0
 
 
 # ---- LLM structured-output schemas -----------------------------------------

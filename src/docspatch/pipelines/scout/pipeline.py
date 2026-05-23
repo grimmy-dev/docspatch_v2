@@ -127,6 +127,7 @@ def execute(
                     batch_token_limit=settings.batch_token_limit,
                     concurrency_limit=settings.concurrency_limit,
                     call_timeout=settings.call_timeout,
+                    precomputed_misses=list(scan.misses),
                 )
             )
         finally:

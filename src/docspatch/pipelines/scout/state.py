@@ -22,11 +22,13 @@ class FileMiss(NamedTuple):
 
 @dataclass(frozen=True)
 class ScanPlan:
-    """Outcome of a pre-scout cache scan: which files are uncached and the cost."""
+    """Outcome of a pre-scout cache scan: uncached paths and cost."""
 
     uncached: tuple[str, ...]
     cached: tuple[str, ...]
     token_estimate: int
+    # Carries read+compressed source for uncached entries so execute reuses it.
+    misses: tuple[FileMiss, ...] = ()
 
     @property
     def uncached_count(self) -> int:

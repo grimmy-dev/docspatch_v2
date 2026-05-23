@@ -9,6 +9,7 @@ from docspatch.llm.factory import build_llm, build_validator_llm
 from docspatch.llm.runnable import LLM_RETRY, TypedRunnable, is_transient, wrap_llm_error
 from docspatch.schemas import Provider, Tier, as_provider, as_tier
 from docspatch.utils import key_cache
+from docspatch.utils.errors import ConfigError
 from docspatch.utils.retry import OnRetry, RateLimitGate
 from docspatch.utils.secrets import register_secret
 
@@ -29,6 +30,9 @@ class LLMClient:
     ) -> None:
         self.provider: Provider = as_provider(provider)
         self.generator_tier: Tier = as_tier(generator_tier)
+        # Fail fast at the edge — empty key would surface as a cryptic provider error later.
+        if not api_key or not api_key.strip():
+            raise ConfigError.missing_api_key(self.provider)
         self._api_key = api_key
         register_secret(api_key)  # mask this key in any later error/log text
         self.llm = build_llm(self.provider, api_key, self.generator_tier)

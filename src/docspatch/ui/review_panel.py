@@ -30,6 +30,14 @@ SIDEBAR_COL_WIDTH = 26
 NAME_TRUNC = 22
 """Max characters shown for one filename in the sidebar tree."""
 
+EXPLORER_MIN_LINES = 8
+EXPLORER_MAX_LINES = 30
+EXPLORER_RESERVED_LINES = 12
+"""Rows reserved for status, breadcrumb, padding, and the action prompt."""
+
+MAX_CODE_LINES = 50
+"""Hard cap on the right-panel code preview height."""
+
 TOP_ACCEPT_ALL = "accept_all"
 TOP_REVIEW = "review"
 TOP_ABORT = "abort"
@@ -381,10 +389,18 @@ def build_parse_fail_body(entry: ReviewEntry) -> RenderableType:
     )
 
 
-def build_code(*, preview: Preview) -> Syntax:
-    """Syntax-highlighted signature + inserted docstring (no inner frame)."""
+def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Syntax:
+    """Syntax-highlighted signature + inserted docstring; head-slice when over max_lines."""
+    raw = preview.code or "# (preview unavailable)"
+    lines = raw.splitlines()
+    if len(lines) > max_lines:
+        # Reserve 1 row for the truncation marker; signature+docstring are
+        # at the top of preview.code so a head slice keeps them intact.
+        kept = lines[: max_lines - 1]
+        elided = len(lines) - len(kept)
+        raw = "\n".join([*kept, f"# ▾ {elided} more body lines"])
     return Syntax(
-        preview.code or "# (preview unavailable)",
+        raw,
         "python",
         line_numbers=True,
         start_line=preview.start_line,
@@ -393,30 +409,46 @@ def build_code(*, preview: Preview) -> Syntax:
     )
 
 
-def build_explorer(files: list[str], *, current: str) -> Tree:
-    """Group files by directory into a collapsible-looking tree.
-
-    Directories show ``▾``; files are listed under them with the current file
-    marked ``▸`` and bolded. Filenames truncate with a leading ellipsis so the
-    tail (basename) stays visible.
-    """
-    groups: dict[str, list[str]] = {}
-    for f in sorted(files):
-        parent = str(Path(f).parent) or "."
-        groups.setdefault(parent, []).append(f)
+def build_explorer(files: list[str], *, current: str, max_lines: int | None = None) -> Tree:
+    """Forward-biased file list: done collapses, current pinned, upcoming fills budget."""
+    budget = max_lines if max_lines is not None else explorer_budget()
+    try:
+        idx = files.index(current)
+    except ValueError:
+        idx = 0
+    done_count = idx
+    upcoming = files[idx:]
 
     tree = Tree("", hide_root=True, guide_style="dim")
-    for parent in sorted(groups):
-        label = "." if parent == "" else parent
-        branch = tree.add(Text.assemble(("▾ ", "yellow"), (f"{label}/", "bold yellow")))
-        for f in groups[parent]:
-            name = Path(f).name
-            shown = truncate(name, NAME_TRUNC)
-            if f == current:
-                branch.add(Text.assemble(("▸ ", "cyan"), (shown, "bold")))
-            else:
-                branch.add(Text(f"  {shown}", style="dim"))
+    if done_count:
+        tree.add(Text(f"✓ {done_count} done", style="dim green"))
+
+    rows_for_files = max(1, budget - (1 if done_count else 0))
+    if len(upcoming) <= rows_for_files:
+        for i, f in enumerate(upcoming):
+            tree.add(_explorer_row(f, is_current=(i == 0)))
+        return tree
+
+    # Overflow: reserve 1 row for the "▾ N more" footer.
+    visible = max(1, rows_for_files - 1)
+    for i, f in enumerate(upcoming[:visible]):
+        tree.add(_explorer_row(f, is_current=(i == 0)))
+    hidden = len(upcoming) - visible
+    tree.add(Text(f"▾ {hidden} more upcoming", style="dim"))
     return tree
+
+
+def _explorer_row(rel: str, *, is_current: bool) -> Text:
+    shown = truncate(rel, NAME_TRUNC)
+    if is_current:
+        return Text.assemble(("● ", "cyan"), (shown, "bold"))
+    return Text(f"  {shown}", style="dim")
+
+
+def explorer_budget() -> int:
+    """Total sidebar rows allowed, clamped to keep the action prompt visible."""
+    _, height = terminal_size()
+    return max(EXPLORER_MIN_LINES, min(EXPLORER_MAX_LINES, height - EXPLORER_RESERVED_LINES))
 
 
 def truncate(text: str, width: int) -> str:

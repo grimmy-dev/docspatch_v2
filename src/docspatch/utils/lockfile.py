@@ -18,11 +18,10 @@ from docspatch.utils.errors import LockError
 
 @contextmanager
 def run_lock(repo_root: Path) -> Iterator[None]:
-    """Hold the per-repo run lock for the duration of the block.
-
-    Raises:
-        LockError: When a live process already holds the lock.
-    """
+    """Hold the per-repo run lock for the duration of the block."""
+    # Cancellation contract: lock is released on any normal exit, exception, or
+    # KeyboardInterrupt (finally block). Only SIGKILL can leave a stale lock,
+    # and a stale lock is auto-cleared on the next run via _clear_or_fail.
     lock = repo_root / ".docspatch" / "run.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     if lock.exists():

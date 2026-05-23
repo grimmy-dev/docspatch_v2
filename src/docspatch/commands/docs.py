@@ -7,13 +7,14 @@ import typer
 
 from docspatch.cache import DocsCache
 from docspatch.checkpoints.janitor import start_janitor, vacuum_checkpoints
-from docspatch.checkpoints.runs import list_incomplete_runs, pick_last_run
+from docspatch.checkpoints.runs import discard_incomplete_runs, list_incomplete_runs, pick_last_run
 from docspatch.llm import LLMClient, tier_for_model
 from docspatch.pipelines.docs import run_docs
 from docspatch.pipelines.docs.flags import RunFlags, preview_check, validate_run_flags
 from docspatch.pipelines.docs.generator import LLMDocstringGenerator
 from docspatch.schemas import RunSettings
 from docspatch.ui import Prompter, QuestionaryPrompter, console
+from docspatch.ui.prompter import is_interactive
 from docspatch.ui.retry_display import RetryDisplay
 from docspatch.ui.review_panel import prompt_conflict, review_session
 from docspatch.utils.config import default_store
@@ -64,6 +65,8 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
         if flags.resume:
             run_id = pick_last_run(asyncio.run(list_incomplete_runs(repo_root)))
             console.print(f"[dim]Resuming run {run_id}[/dim]")
+        else:
+            run_id = offer_resume(repo_root, p)
 
         retry_display = RetryDisplay()
         client = LLMClient(
@@ -131,6 +134,23 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
         raise typer.Exit(1)
     if result.functions_documented == 0 and result.modules_documented == 0:
         console.print("[dim]Nothing to document. All functions already have docstrings.[/dim]")
+
+
+def offer_resume(repo_root: Path, p: Prompter) -> str | None:
+    """Detect an interrupted run; offer to resume it."""
+    incomplete = asyncio.run(list_incomplete_runs(repo_root))
+    if not incomplete:
+        return None
+    rid = incomplete[0]
+    if not is_interactive():
+        # Headless: never block; mention how to resume explicitly.
+        console.print(f"[dim]Interrupted run {rid} found — pass --resume to continue it.[/dim]")
+        return None
+    if p.confirm(f"Resume interrupted run {rid}?", default=True):
+        console.print(f"[dim]Resuming run {rid}[/dim]")
+        return rid
+    asyncio.run(discard_incomplete_runs(repo_root))
+    return None
 
 
 async def run_with_janitor(*args: object, repo_root: Path, **kwargs: object):

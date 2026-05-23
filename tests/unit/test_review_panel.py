@@ -11,6 +11,7 @@ from docspatch.ui.review_panel import (
     ITEM_BACK,
     ITEM_REJECT,
     ITEM_RERUN,
+    MAX_CODE_LINES,
     TOP_ABORT,
     TOP_ACCEPT_ALL,
     TOP_REVIEW,
@@ -18,6 +19,7 @@ from docspatch.ui.review_panel import (
     RenderCtx,
     ReviewEntry,
     build_breadcrumb,
+    build_code,
     build_explorer,
     build_previews,
     item_menu,
@@ -237,6 +239,78 @@ def test_renders_at_extreme_terminal_widths(tmp_path: Path) -> None:
         )
         output = render_str(panel, width=width)
         assert "foo" in output
+
+
+def test_explorer_collapses_done_pins_current_at_top() -> None:
+    files = [f"f{i:02d}.py" for i in range(20)]
+    tree = build_explorer(files, current="f05.py", max_lines=10)
+    out = render_str(tree, width=40)
+    assert "5 done" in out
+    assert "f05.py" in out
+    # Current row immediately follows the done summary.
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    done_idx = next(i for i, ln in enumerate(lines) if "5 done" in ln)
+    assert "f05.py" in lines[done_idx + 1]
+
+
+def test_explorer_truncates_upcoming_when_over_budget() -> None:
+    files = [f"f{i:02d}.py" for i in range(50)]
+    tree = build_explorer(files, current="f00.py", max_lines=8)
+    out = render_str(tree, width=40)
+    assert "more upcoming" in out
+    # No done header since current is first.
+    assert "done" not in out
+
+
+def test_explorer_omits_done_header_on_first_file() -> None:
+    tree = build_explorer(["a.py", "b.py", "c.py"], current="a.py", max_lines=10)
+    out = render_str(tree, width=40)
+    assert "done" not in out
+
+
+def test_explorer_no_footer_when_everything_fits() -> None:
+    tree = build_explorer(["a.py", "b.py", "c.py"], current="a.py", max_lines=10)
+    out = render_str(tree, width=40)
+    assert "more upcoming" not in out
+
+
+def test_explorer_current_not_in_files_falls_back_to_first() -> None:
+    tree = build_explorer(["a.py", "b.py"], current="ghost.py", max_lines=10)
+    out = render_str(tree, width=40)
+    assert "done" not in out
+    assert "a.py" in out
+
+
+def test_build_code_truncates_long_body() -> None:
+    body = "def foo():\n" + "\n".join(f"    x{i} = {i}" for i in range(120))
+    syntax = build_code(preview=Preview(code=body, start_line=1))
+    out = render_str(syntax, width=80)
+    assert "more body lines" in out
+
+
+def test_build_code_keeps_signature_and_docstring_visible() -> None:
+    body = 'def foo():\n    """The docstring under review."""\n' + "\n".join(
+        f"    x{i} = {i}" for i in range(120)
+    )
+    out = render_str(build_code(preview=Preview(code=body, start_line=1)), width=80)
+    assert "def foo" in out
+    assert "docstring under review" in out
+
+
+def test_build_code_no_footer_when_short() -> None:
+    short = "def foo():\n    return 1\n"
+    out = render_str(build_code(preview=Preview(code=short, start_line=1)), width=80)
+    assert "more body lines" not in out
+
+
+def test_build_code_respects_max_lines_override() -> None:
+    body = "\n".join(f"line{i}" for i in range(20))
+    out = render_str(build_code(preview=Preview(code=body, start_line=1), max_lines=5), width=80)
+    assert "more body lines" in out
+
+
+def test_max_code_lines_is_50() -> None:
+    assert MAX_CODE_LINES == 50
 
 
 def test_parse_failed_panel_shows_raw_output() -> None:

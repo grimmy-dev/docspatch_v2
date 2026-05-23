@@ -43,3 +43,13 @@ def pick_last_run(run_ids: list[str]) -> str:
             hint="Start a fresh run with `dp docs`.",
         )
     return run_ids[0]
+
+
+async def discard_incomplete_runs(repo_root: Path) -> None:
+    """Drop every resumable docs thread so it stops being offered."""
+    db_path = repo_root / ".docspatch" / "checkpoints" / "docs.sqlite"
+    if not db_path.exists():
+        return
+    async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
+        for thread_id in await list_incomplete_runs(repo_root):
+            await saver.adelete_thread(thread_id)
