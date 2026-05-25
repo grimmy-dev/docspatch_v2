@@ -21,6 +21,12 @@ class LLMDocstringGenerator:
     """
 
     def __init__(self, client: LLMClient, remarks: str | None = None) -> None:
+        """Initialize the generator with an LLM client and optional instructions.
+
+        Args:
+            client: The LLM client to execute generation.
+            remarks: Optional supplemental instructions for the model.
+        """
         self.chain = client.with_structured_output(BatchDocstringOutput)
         self.remarks = remarks
 

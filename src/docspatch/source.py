@@ -90,6 +90,13 @@ def extract_module_docstring(source: str) -> str | None:
 
 
 def _walk_functions(node: ast.AST, parents: list[str], out: dict[str, FunctionDocState]) -> None:
+    """Traverse the AST to identify functions for documentation state.
+
+    Args:
+        node: The current AST node being visited.
+        parents: A list of parent scope names.
+        out: A dictionary to collect results.
+    """
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.ClassDef):
             _walk_functions(child, [*parents, child.name], out)
@@ -145,6 +152,15 @@ def _build_args(fn_args: ast.arguments) -> list[str]:
 
 
 def _render_arg(arg: ast.arg, default: str | None) -> str:
+    """Format a function argument for a signature.
+
+    Args:
+        arg: The argument node from the AST.
+        default: The default value as a string if it exists.
+
+    Returns:
+        A string representation of the argument.
+    """
     part = arg.arg
     if arg.annotation:
         part += f": {ast.unparse(arg.annotation)}"
@@ -154,6 +170,15 @@ def _render_arg(arg: ast.arg, default: str | None) -> str:
 
 
 def _render_star_arg(prefix: str, arg: ast.arg) -> str:
+    """Format a variable-length argument for a signature.
+
+    Args:
+        prefix: The prefix character like * or **.
+        arg: The argument node.
+
+    Returns:
+        A string representation of the star argument.
+    """
     part = f"{prefix}{arg.arg}"
     if arg.annotation:
         part += f": {ast.unparse(arg.annotation)}"
@@ -183,10 +208,27 @@ class _BodyStripper(cst.CSTTransformer):
     """Replace every function body with its docstring (if any) plus ``...``."""
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
+        """Transform the function body by stripping out original content.
+
+        Args:
+            original_node: The initial function definition node.
+            updated_node: The function definition node being processed.
+
+        Returns:
+            A modified node with a stripped body.
+        """
         return updated_node.with_changes(body=_stripped_body(updated_node.body))
 
 
 def _stripped_body(body: cst.BaseSuite) -> cst.BaseSuite:
+    """Create an empty suite for a function body while preserving existing docstrings.
+
+    Args:
+        body: The original body suite.
+
+    Returns:
+        A suite containing only the docstring and an ellipsis.
+    """
     if not isinstance(body, cst.IndentedBlock):
         return body
     kept: list[cst.BaseStatement] = []
@@ -197,6 +239,14 @@ def _stripped_body(body: cst.BaseSuite) -> cst.BaseSuite:
 
 
 def _is_cst_docstring(stmt: cst.BaseStatement) -> bool:
+    """Determine if a statement is a valid docstring.
+
+    Args:
+        stmt: The statement to check.
+
+    Returns:
+        True if the statement is a string expression, False otherwise.
+    """
     if not isinstance(stmt, cst.SimpleStatementLine) or not stmt.body:
         return False
     first = stmt.body[0]
@@ -245,12 +295,27 @@ class _DocstringInserter(cst.CSTTransformer):
     """Prepend docstrings to functions whose qualname is in ``targets``."""
 
     def __init__(self, targets: dict[str, str], indent_unit: str) -> None:
+        """Initialize the inserter with target docstrings and formatting settings.
+
+        Args:
+            targets: Mapping of qualified names to their docstring content.
+            indent_unit: The string used for indentation.
+        """
         self.targets = targets
         self.indent_unit = indent_unit
         self.path: list[str] = []
         self.matched: set[str] = set()
 
     def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
+        """Insert the module docstring if defined.
+
+        Args:
+            original_node: The module node before modification.
+            updated_node: The module node being processed.
+
+        Returns:
+            The module node with an added docstring.
+        """
         docstring = self.targets.get(MODULE_QUALNAME)
         if docstring is None or MODULE_QUALNAME in self.matched:
             return updated_node
@@ -258,16 +323,44 @@ class _DocstringInserter(cst.CSTTransformer):
         return updated_node.with_changes(body=_module_body_with_docstring(updated_node.body, docstring))
 
     def visit_ClassDef(self, node: cst.ClassDef) -> None:
+        """Track the current scope while visiting class definitions.
+
+        Args:
+            node: The class node being entered.
+        """
         self.path.append(node.name.value)
 
     def leave_ClassDef(self, original_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
+        """Pop the current scope after leaving a class definition.
+
+        Args:
+            original_node: The original class node.
+            updated_node: The class node being processed.
+
+        Returns:
+            The processed class definition node.
+        """
         self.path.pop()
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+        """Track the current scope while visiting function definitions.
+
+        Args:
+            node: The function node being entered.
+        """
         self.path.append(node.name.value)
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
+        """Insert a docstring into the function definition if a target exists.
+
+        Args:
+            original_node: The original function node.
+            updated_node: The function node being processed.
+
+        Returns:
+            The function node with the docstring inserted.
+        """
         current = ".".join(self.path)
         depth = len(self.path)
         self.path.pop()
@@ -280,6 +373,16 @@ class _DocstringInserter(cst.CSTTransformer):
 
 
 def _body_with_docstring(body: cst.BaseSuite, docstring: str, body_indent: str) -> cst.BaseSuite:
+    """Prepare a body suite to include the generated docstring.
+
+    Args:
+        body: The original body suite.
+        docstring: The docstring content to inject.
+        body_indent: The indentation level for the docstring.
+
+    Returns:
+        A suite with the new docstring prepended.
+    """
     if not isinstance(body, cst.IndentedBlock):
         return body
     doc_stmt = _make_docstring_statement(docstring, body_indent)
@@ -305,6 +408,15 @@ def _module_body_with_docstring(
 
 
 def _make_docstring_statement(docstring: str, body_indent: str) -> cst.SimpleStatementLine:
+    """Convert a raw docstring string into a CST expression statement.
+
+    Args:
+        docstring: The raw docstring text.
+        body_indent: The indentation to apply.
+
+    Returns:
+        A statement line node containing the docstring.
+    """
     if "\n" not in docstring:
         quoted = f'"""{docstring}"""'
     else:
@@ -314,6 +426,15 @@ def _make_docstring_statement(docstring: str, body_indent: str) -> cst.SimpleSta
 
 
 def _indent_inner_lines(docstring: str, body_indent: str) -> str:
+    """Apply indentation to lines within a multi-line docstring.
+
+    Args:
+        docstring: The raw docstring.
+        body_indent: The indentation string.
+
+    Returns:
+        The docstring with lines appropriately indented.
+    """
     lines = docstring.split("\n")
     indented = [lines[0]]
     for line in lines[1:]:

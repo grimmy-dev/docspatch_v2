@@ -24,6 +24,7 @@ def get_dir_tree(root: Path, max_depth: int = 3) -> str:
 
 
 def _walk(root: Path, current: Path, max_depth: int, depth: int, lines: list[str]) -> None:
+    """Recursively walk the file system to display project structure."""
     if depth > max_depth:
         return
     for entry in sorted(current.iterdir()):

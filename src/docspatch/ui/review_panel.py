@@ -30,6 +30,14 @@ SIDEBAR_COL_WIDTH = 26
 NAME_TRUNC = 22
 """Max characters shown for one filename in the sidebar tree."""
 
+
+def short_path(rel: str) -> str:
+    """Return ``parent/file`` for display."""
+    parts = rel.replace("\\", "/").split("/")
+    if len(parts) <= 1:
+        return rel
+    return f"{parts[-2]}/{parts[-1]}"
+
 EXPLORER_MIN_LINES = 8
 EXPLORER_MAX_LINES = 30
 EXPLORER_RESERVED_LINES = 12
@@ -64,6 +72,7 @@ class ReviewEntry:
 
     @property
     def id(self) -> str:
+        """Generate a unique identifier for the review entry."""
         return f"{self.rel}::{self.qualname}"
 
 
@@ -78,6 +87,7 @@ class Choice:
     aborted: bool = False
 
     def as_dict(self) -> dict:
+        """Export the choice attributes as a dictionary."""
         return {
             "accepted": self.accepted,
             "rejected": self.rejected,
@@ -357,7 +367,7 @@ def build_status(*, entry: ReviewEntry, ctx: RenderCtx) -> Text:
         ("✗ ", "red"),
         (f"{ctx.rejected_count}", "red"),
         "   ",
-        (f"· {entry.rel}", "dim"),
+        (f"· {short_path(entry.rel)}", "dim"),
     )
 
 
@@ -369,7 +379,7 @@ def build_breadcrumb(*, entry: ReviewEntry, siblings: list[str]) -> Text:
         in_file = 1
     return Text.assemble(
         ("📁 ", "yellow"),
-        (entry.rel, "bold"),
+        (short_path(entry.rel), "bold"),
         ("  › ", "dim"),
         ("◉ ", "cyan"),
         (f"{entry.qualname}()", "bold cyan"),
@@ -439,7 +449,13 @@ def build_explorer(files: list[str], *, current: str, max_lines: int | None = No
 
 
 def _explorer_row(rel: str, *, is_current: bool) -> Text:
-    shown = truncate(rel, NAME_TRUNC)
+    """Render a single row for the file explorer view.
+
+    Args:
+        rel: Relative path of the file.
+        is_current: Flag indicating if the file is the currently selected one.
+    """
+    shown = truncate(short_path(rel), NAME_TRUNC)
     if is_current:
         return Text.assemble(("● ", "cyan"), (shown, "bold"))
     return Text(f"  {shown}", style="dim")

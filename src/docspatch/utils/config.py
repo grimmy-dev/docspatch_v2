@@ -44,6 +44,7 @@ class ConfigStore:
     # ── reads ────────────────────────────────────────────────────────────
 
     def read(self) -> DocspatchConfig:
+        """Load the combined documentation configuration from storage."""
         return load_config(global_path=self.global_path, repo_path=self.repo_path)
 
     def api_key_for(self, provider: str) -> str | None:
@@ -62,9 +63,11 @@ class ConfigStore:
     # ── writes ───────────────────────────────────────────────────────────
 
     def write_global(self, patch: ConfigPatch) -> None:
+        """Persist a patch to the global configuration file."""
         merge_write(self.global_path, patch)
 
     def write_repo(self, patch: ConfigPatch) -> None:
+        """Persist a patch to the repository-specific configuration file."""
         merge_write(self.repo_path, patch)
 
     def set(self, key: str, raw_value: str) -> WrittenKey:

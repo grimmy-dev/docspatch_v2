@@ -52,6 +52,24 @@ class GraphContext:
         call_timeout: float,
         ledger: TokenLedger,
     ) -> None:
+        """Initialize the document generation context with configuration and dependencies.
+
+        Args:
+            generator: The docstring generator instance.
+            sem: Semaphore for controlling concurrent requests.
+            repo_root: Root path of the repository.
+            tone: Desired tone for generated documentation.
+            cache: Optional cache for existing documentation states.
+            provider: Name of the LLM provider.
+            tier: The selected performance tier.
+            prompter: Interface for user interactions.
+            auto_confirm: Flag to bypass manual confirmations.
+            batch_token_limit: Maximum token count allowed per batch.
+            run_id: Unique identifier for the current run.
+            interactive: Boolean flag for interactive mode.
+            call_timeout: Seconds before an LLM call times out.
+            ledger: The token usage ledger.
+        """
         self.generator = generator
         self.sem = sem
         self.repo_root = repo_root

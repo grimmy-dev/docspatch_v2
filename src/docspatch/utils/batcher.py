@@ -32,6 +32,7 @@ class Batch[T]:
     oversized: bool = False
 
     def __post_init__(self) -> None:
+        """Validate the batch data post-initialization."""
         if self.total_size < 0:
             raise ValueError("total_size must be non-negative")
         if self.oversized and len(self.items) != 1:
@@ -46,18 +47,22 @@ class BatchPlan[T]:
 
     @property
     def batch_count(self) -> int:
+        """Calculate the total number of batches in the plan."""
         return len(self.batches)
 
     @property
     def item_count(self) -> int:
+        """Calculate the total number of items distributed across batches."""
         return sum(len(b.items) for b in self.batches)
 
     @property
     def oversized_count(self) -> int:
+        """Calculate the number of batches marked as oversized."""
         return sum(1 for b in self.batches if b.oversized)
 
     @property
     def total_size(self) -> int:
+        """Calculate the total size of all items across all batches."""
         return sum(b.total_size for b in self.batches)
 
 

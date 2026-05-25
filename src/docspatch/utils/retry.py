@@ -18,6 +18,7 @@ class RetryPolicy:
     max_delay: float = float("inf")
 
     def delay_for(self, attempt: int) -> float:
+        """Calculate the backoff delay for a specific attempt."""
         return min(self.base_delay * (2**attempt), self.max_delay)
 
 
@@ -30,6 +31,7 @@ class RateLimitGate:
     """
 
     def __init__(self, policy: RetryPolicy, on_retry: OnRetry | None = None) -> None:
+        """Initialize the rate limit gate with a policy."""
         self.policy = policy
         self.on_retry = on_retry
         self.lock = asyncio.Lock()

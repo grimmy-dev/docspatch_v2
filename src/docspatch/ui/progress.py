@@ -17,6 +17,11 @@ class BarHandle:
     task: TaskID
 
     def __call__(self, message: str | None = None) -> None:
+        """Advance the progress bar or update the current status message.
+
+        Args:
+            message: Optional update for the task description.
+        """
         if message:
             self.bar.update(self.task, description=message)
         self.bar.advance(self.task)

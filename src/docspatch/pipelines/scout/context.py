@@ -32,6 +32,16 @@ class ScoutContext:
         progress_cb: ProgressCb | None,
         call_timeout: float,
     ) -> None:
+        """Initialize the scouting context with necessary dependencies.
+
+        Args:
+            client: The LLM client instance.
+            misses: Dictionary of file misses requiring analysis.
+            cache: The scout cache instance.
+            gate: The rate limit gate.
+            progress_cb: Optional callback for reporting progress.
+            call_timeout: Time limit for LLM requests.
+        """
         self.client = client
         self.misses = misses
         self.cache = cache

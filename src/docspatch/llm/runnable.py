@@ -37,9 +37,22 @@ class TokenUsage:
 
     @property
     def total(self) -> int:
+        """Calculate the aggregate number of tokens.
+
+        Returns:
+            The total count of input and output tokens.
+        """
         return self.input_tokens + self.output_tokens
 
     def __add__(self, other: TokenUsage) -> TokenUsage:
+        """Sum two token usage instances.
+
+        Args:
+            other: Another instance of token usage to add.
+
+        Returns:
+            A new TokenUsage instance representing the combined count.
+        """
         return TokenUsage(
             self.input_tokens + other.input_tokens,
             self.output_tokens + other.output_tokens,
@@ -71,6 +84,12 @@ class TypedRunnable[T]:
     """Wraps a LangChain structured chain with the gate + parse-retry policy."""
 
     def __init__(self, chain: Runnable[str, T], gate: RateLimitGate) -> None:
+        """Initialize the runnable with a chain and a rate limit gate.
+
+        Args:
+            chain: The base runnable chain.
+            gate: The rate limiting manager.
+        """
         self.chain = chain
         self.gate = gate
 

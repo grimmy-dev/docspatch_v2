@@ -16,6 +16,7 @@ def current_store() -> ConfigStore:
 
 
 def run() -> None:
+    """Display the current merged configuration settings in a tabular format."""
     s = current_store()
     cfg = load_config(global_path=s.global_path, repo_path=s.repo_path)
     rows = [

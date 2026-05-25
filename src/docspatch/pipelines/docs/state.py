@@ -70,6 +70,11 @@ class GeneratedDoc(BaseModel):
 
     @property
     def key(self) -> GenKey:
+        """Retrieve the composite identifier for the document.
+
+        Returns:
+            A key tuple containing the relative file path and the qualified name.
+        """
         return (self.rel, self.qualname)
 
 

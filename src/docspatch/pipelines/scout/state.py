@@ -32,14 +32,29 @@ class ScanPlan:
 
     @property
     def uncached_count(self) -> int:
+        """Count files that require scouting.
+
+        Returns:
+            The number of files currently missing from cache.
+        """
         return len(self.uncached)
 
     @property
     def cached_count(self) -> int:
+        """Count files that are already cached.
+
+        Returns:
+            The number of cached files.
+        """
         return len(self.cached)
 
     @property
     def all_current(self) -> bool:
+        """Check if all files have been scouted.
+
+        Returns:
+            True if no files are missing from the cache, False otherwise.
+        """
         return not self.uncached
 
 

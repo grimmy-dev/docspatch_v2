@@ -25,6 +25,11 @@ class CostEstimate:
 
     @property
     def total(self) -> float:
+        """Calculate the cumulative cost of the estimate.
+
+        Returns:
+            The sum of input and output costs.
+        """
         return self.input_cost + self.output_cost
 
 
