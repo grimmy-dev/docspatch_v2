@@ -47,7 +47,7 @@ def test_init_runs_end_to_end_with_scripted_prompter(monkeypatch, tmp_path):
     mock_client = MagicMock()
     mock_client.validate_key.return_value = True
     monkeypatch.setattr("docspatch.pipelines.scout.pipeline.LLMClient", MagicMock(return_value=mock_client))
-    monkeypatch.setattr("docspatch.utils.selection.LLMClient", MagicMock(return_value=mock_client))
+    monkeypatch.setattr("docspatch.commands.init.validate_api_key", lambda _p, _k: True)
     monkeypatch.setattr(
         "docspatch.pipelines.scout.pipeline.plan_uncached",
         lambda *a, **kw: ScanPlan(uncached=(), cached=(), token_estimate=0),

@@ -23,12 +23,15 @@ def _patch_env(
     validate_key: bool = True,
     context_up_to_date: bool = True,
 ):
-    """Patch out LLMClient + cache scan. Returns (LLMClient mock cls, client instance)."""
+    """Patch out LLMClient + key validator + cache scan."""
     mock_client = MagicMock()
     mock_client.validate_key.return_value = validate_key
     mock_llm_cls = MagicMock(return_value=mock_client)
     monkeypatch.setattr("docspatch.pipelines.scout.pipeline.LLMClient", mock_llm_cls)
-    monkeypatch.setattr("docspatch.utils.selection.LLMClient", mock_llm_cls)
+    monkeypatch.setattr(
+        "docspatch.commands.init.validate_api_key",
+        lambda _provider, _key: validate_key,
+    )
     if context_up_to_date:
         scan = ScanPlan(uncached=(), cached=(), token_estimate=0)
     else:

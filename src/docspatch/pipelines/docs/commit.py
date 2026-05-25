@@ -16,8 +16,14 @@ from pathlib import Path
 
 from langgraph.types import interrupt
 
-from docspatch.cache import FileDocState
-from docspatch.source import DocstringInsert, file_hash, insert_docstrings, scan_functions
+from docspatch.cache import FileDocState, FunctionDocState
+from docspatch.source import (
+    MODULE_QUALNAME,
+    DocstringInsert,
+    file_hash,
+    insert_docstrings,
+    scan_functions,
+)
 from docspatch.ui import console, status
 from docspatch.utils.fs import atomic_write
 
@@ -30,17 +36,24 @@ class CommitJournal:
     """
 
     def __init__(self, checkpoint_dir: Path, run_id: str) -> None:
-        self.path = checkpoint_dir / f"commit-{run_id}.journal"
+        """Initialize the commit journal with checkpoint directory and run identifier.
 
-    def committed(self) -> list[str]:
-        """Repo-relative paths recorded so far, in commit order."""
-        if not self.path.exists():
-            return []
-        rels: list[str] = []
-        for line in self.path.read_text().splitlines():
-            if line.strip():
-                rels.append(json.loads(line)["rel"])
-        return rels
+        Args:
+            checkpoint_dir: The directory used for storing run state.
+            run_id: A unique ID for the current batch process.
+        """
+        self.path = checkpoint_dir / f"commit-{run_id}.journal"
+        # Load once; mutate on append. Membership is O(1) and rollback keeps order.
+        self._order: list[str] = _read_journal(self.path)
+        self._set: set[str] = set(self._order)
+
+    def committed_order(self) -> list[str]:
+        """Repo-relative paths recorded so far, in commit order. Used for rollback restore."""
+        return list(self._order)
+
+    def is_committed(self, rel: str) -> bool:
+        """True when ``rel`` has already been journalled in this run."""
+        return rel in self._set
 
     def append(self, rel: str, file_hash_after: str) -> None:
         """Record one committed file."""
@@ -48,12 +61,45 @@ class CommitJournal:
         record = {"rel": rel, "ts": time.time(), "file_hash_after": file_hash_after}
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
+        self._order.append(rel)
+        self._set.add(rel)
 
     def delete(self) -> None:
+        """Remove the current journal file from the file system."""
         self.path.unlink(missing_ok=True)
+        self._order.clear()
+        self._set.clear()
+
+
+def _read_journal(path: Path) -> list[str]:
+    """Repo-relative paths from an existing journal in commit order.
+
+    Skips malformed lines silently so a partial write from a hard crash does
+    not block the resume.
+    """
+    if not path.exists():
+        return []
+    rels: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rels.append(json.loads(line)["rel"])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+    return rels
 
 
 def _snapshot_file(snapshot_dir: Path, rel: str) -> Path:
+    """Construct the path for a gzipped snapshot file.
+
+    Args:
+        snapshot_dir: The directory to store snapshots.
+        rel: The relative path identifier.
+
+    Returns:
+        A path object pointing to the specific snapshot.
+    """
     return snapshot_dir / f"{rel}.gz"
 
 
@@ -85,14 +131,13 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
     checkpoint_dir = ctx.repo_root / ".docspatch" / "checkpoints"
     journal = CommitJournal(checkpoint_dir, ctx.run_id)
     snapshot_dir = checkpoint_dir / f"originals-{ctx.run_id}"
-    done = journal.committed()
 
-    committed = list(done)
+    committed = journal.committed_order()
     skipped: list[str] = []
 
     with status(f"Writing {len(by_file)} file(s)..."):
         for rel in sorted(by_file):
-            if rel in done:
+            if journal.is_committed(rel):
                 continue
             path = ctx.repo_root / rel
             source = path.read_text()
@@ -127,12 +172,13 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
             if ctx.cache is not None:
                 # Stat after write so next run fast-skips via size+mtime.
                 st = path.stat()
+                prior = ctx.cache.get(rel)
                 ctx.cache.set(
                     rel,
                     FileDocState(
                         path=rel,
                         file_hash=new_hash,
-                        functions=scan_functions(new_source),
+                        functions=_functions_after_insert(prior, inserts, new_source),
                         size=st.st_size,
                         mtime_ns=st.st_mtime_ns,
                     ),
@@ -163,7 +209,33 @@ def _resolve_conflict(ctx, rel: str) -> str:  # noqa: ANN001
 
 def _rollback(ctx, journal: CommitJournal, snapshot_dir: Path) -> None:  # noqa: ANN001
     """Restore every journalled file from its snapshot, then clear journal + snapshots."""
-    for rel in journal.committed():
+    for rel in journal.committed_order():
         atomic_write(ctx.repo_root / rel, read_snapshot(snapshot_dir, rel))
     journal.delete()
     shutil.rmtree(snapshot_dir, ignore_errors=True)
+
+
+def _functions_after_insert(
+    prior: FileDocState | None,
+    inserts: list[DocstringInsert],
+    new_source: str,
+) -> dict[str, FunctionDocState]:
+    """Function state after inserting ``inserts``. Mutates prior cache (hashes
+    exclude docstrings, so only ``has_docstring`` flips). Re-scans on cache
+    miss or unknown qualname.
+    """
+    if prior is None:
+        return scan_functions(new_source)
+    functions = dict(prior.functions)
+    for ins in inserts:
+        if ins.qualname == MODULE_QUALNAME:
+            continue
+        cached = functions.get(ins.qualname)
+        if cached is None:
+            return scan_functions(new_source)
+        functions[ins.qualname] = FunctionDocState(
+            hash=cached.hash,
+            has_docstring=True,
+            line_start=cached.line_start,
+        )
+    return functions

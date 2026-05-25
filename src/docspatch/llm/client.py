@@ -15,7 +15,14 @@ from docspatch.utils.secrets import register_secret
 
 RetryCallback = OnRetry
 
-__all__ = ["LLM_RETRY", "LLMClient", "RetryCallback", "is_transient", "wrap_llm_error"]
+__all__ = ["LLM_RETRY", "LLMClient", "RetryCallback", "is_transient", "validate_api_key", "wrap_llm_error"]
+
+
+def validate_api_key(provider: str, api_key: str) -> bool:
+    """True iff ``provider`` accepts ``api_key``. Thin wrapper for callers that
+    only need the boolean — avoids building a full :class:`LLMClient`.
+    """
+    return LLMClient(provider=provider, api_key=api_key).validate_key()
 
 
 class LLMClient:
@@ -28,6 +35,14 @@ class LLMClient:
         generator_tier: str = "fast",
         retry_cb: RetryCallback | None = None,
     ) -> None:
+        """Initialize the LLM client with a provider and specific settings.
+
+        Args:
+            provider: The name of the LLM provider.
+            api_key: The authentication key for the provider.
+            generator_tier: The performance tier for the generator model.
+            retry_cb: Optional callback for tracking retry attempts.
+        """
         self.provider: Provider = as_provider(provider)
         self.generator_tier: Tier = as_tier(generator_tier)
         # Fail fast at the edge — empty key would surface as a cryptic provider error later.
@@ -41,10 +56,20 @@ class LLMClient:
 
     @property
     def scout_model(self) -> str:
+        """Retrieve the identifier for the scouting model.
+
+        Returns:
+            The name of the fast model suitable for scouting tasks.
+        """
         return resolve_tier_model(self.provider, "fast")
 
     @property
     def generator_model(self) -> str:
+        """Retrieve the identifier for the generator model.
+
+        Returns:
+            The name of the configured model for generation tasks.
+        """
         return resolve_tier_model(self.provider, self.generator_tier)
 
     def validate_key(self) -> bool:
@@ -65,6 +90,14 @@ class LLMClient:
         return True
 
     def with_structured_output[T](self, schema: type[T]) -> TypedRunnable[T]:
+        """Configure the client to produce output matching a specific schema.
+
+        Args:
+            schema: The Pydantic model class defining the desired structure.
+
+        Returns:
+            A runnable instance configured for structured output.
+        """
         base_chain = cast(
             Runnable[str, T],
             self.llm.with_structured_output(schema),

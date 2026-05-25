@@ -1,7 +1,6 @@
 """`ensure_configured` reusable initializer for any command needing full config."""
 
 import tomllib
-from unittest.mock import MagicMock
 
 from docspatch.ui import ScriptedPrompter
 from docspatch.utils.config import ConfigStore
@@ -15,18 +14,15 @@ def make_store(tmp_path):
     )
 
 
-def patch_llm(monkeypatch):
-    mock_client = MagicMock()
-    mock_client.validate_key.return_value = True
-    monkeypatch.setattr("docspatch.utils.selection.LLMClient", MagicMock(return_value=mock_client))
+def accept_key(_provider: str, _key: str) -> bool:
+    return True
 
 
-def test_prompts_for_all_fields_when_config_empty(monkeypatch, tmp_path):
-    patch_llm(monkeypatch)
+def test_prompts_for_all_fields_when_config_empty(tmp_path):
     store = make_store(tmp_path)
     prompter = ScriptedPrompter(["anthropic", "sk-test", "balanced", "professional"])
 
-    selections = ensure_configured(store, prompter)
+    selections = ensure_configured(store, prompter, accept_key)
 
     assert selections.provider == "anthropic"
     assert selections.api_key == "sk-test"
@@ -35,11 +31,14 @@ def test_prompts_for_all_fields_when_config_empty(monkeypatch, tmp_path):
     assert prompter._index == 4
 
 
-def test_persists_selections_to_disk(monkeypatch, tmp_path):
-    patch_llm(monkeypatch)
+def test_persists_selections_to_disk(tmp_path):
     store = make_store(tmp_path)
 
-    ensure_configured(store, ScriptedPrompter(["anthropic", "sk-test", "balanced", "professional"]))
+    ensure_configured(
+        store,
+        ScriptedPrompter(["anthropic", "sk-test", "balanced", "professional"]),
+        accept_key,
+    )
 
     global_data = tomllib.loads((tmp_path / "global.toml").read_text())
     assert global_data["provider"] == "anthropic"
@@ -49,8 +48,7 @@ def test_persists_selections_to_disk(monkeypatch, tmp_path):
     assert repo_data["tone"] == "professional"
 
 
-def test_no_prompts_when_fully_configured(monkeypatch, tmp_path):
-    patch_llm(monkeypatch)
+def test_no_prompts_when_fully_configured(tmp_path):
     store = make_store(tmp_path)
     store.global_path.parent.mkdir(parents=True, exist_ok=True)
     store.global_path.write_text('provider = "anthropic"\napi_key_anthropic = "sk-existing"\n')
@@ -58,7 +56,7 @@ def test_no_prompts_when_fully_configured(monkeypatch, tmp_path):
     store.repo_path.write_text('generator_model = "claude-sonnet-4-6"\nscout_model = "claude-haiku-4-5-20251001"\ntone = "technical"\n')
 
     prompter = ScriptedPrompter([])
-    selections = ensure_configured(store, prompter)
+    selections = ensure_configured(store, prompter, accept_key)
 
     assert selections.provider == "anthropic"
     assert selections.tone == "technical"

@@ -52,6 +52,14 @@ class ScopedValue[T]:
 
 
 def _default(key: str) -> ScopedValue[Any]:
+    """Retrieve the default configuration for a specific key.
+
+    Args:
+        key: The configuration key to lookup.
+
+    Returns:
+        A scoped value object with the default setting.
+    """
     return ScopedValue(CONFIG_DEFAULTS[key], "default")
 
 
@@ -88,18 +96,6 @@ class RunSettings:
             concurrency_limit=int(config.concurrency_limit.value or DEFAULT_CONCURRENCY_LIMIT),
             call_timeout=float(config.call_timeout.value or DEFAULT_CALL_TIMEOUT),
         )
-
-
-# ---- Git types -------------------------------------------------------------
-
-
-@dataclass
-class CommitInfo:
-    sha: str
-    message: str
-    author: str
-    timestamp: str
-    files_changed: list[str] = field(default_factory=list)
 
 
 # ---- Source-analysis types -------------------------------------------------

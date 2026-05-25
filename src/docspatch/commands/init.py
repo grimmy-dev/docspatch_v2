@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from docspatch.cache import ScoutCache
+from docspatch.llm import validate_api_key
 from docspatch.pipelines.scout.pipeline import pre_build
 from docspatch.ui import Prompter, QuestionaryPrompter, console
 from docspatch.utils.config import ConfigStore, default_store
@@ -33,7 +34,7 @@ def run(
     store = resolve_store(repo_root, global_config_path)
 
     log.debug("init starting for repo: %s", repo_root)
-    selections = ensure_configured(store, p, reconfigure=reconfigure)
+    selections = ensure_configured(store, p, validate_api_key, reconfigure=reconfigure)
     select_license(repo_root, p, reconfigure=reconfigure)
     log.debug("config + license resolved; provider=%s", selections.provider)
 
@@ -46,6 +47,15 @@ def run(
 
 
 def resolve_store(repo_root: Path, global_config_path: Path | None) -> ConfigStore:
+    """Determine the appropriate configuration storage based on provided paths.
+
+    Args:
+        repo_root: The path to the repository root.
+        global_config_path: Optional path to a custom global configuration file.
+
+    Returns:
+        A ConfigStore instance pointing to the relevant config files.
+    """
     if global_config_path is None:
         return default_store(repo_root)
     return ConfigStore(

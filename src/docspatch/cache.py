@@ -9,6 +9,7 @@ version, subdir, and state ↔ JSON mapping.
 import gzip
 import hashlib
 import json
+import os
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -84,6 +85,11 @@ class GzipJSONCache[T](ABC):
     LABEL: ClassVar[str] = "cache"
 
     def __init__(self, repo_root: Path) -> None:
+        """Initialize the cache with a specified repository root path.
+
+        Args:
+            repo_root: The file system path to the root of the repository.
+        """
         self.root = repo_root.resolve()
         self.cache_dir = self.root / ".docspatch" / "cache" / self.SUBDIR
         self._memo: dict[str, T | None] = {}
@@ -130,14 +136,14 @@ class GzipJSONCache[T](ABC):
         """Return file count, total size, and last-build timestamp."""
         empty = CacheInfo(file_count=0, total_size_bytes=0, last_build=None)
         try:
-            files = [f for f in self.cache_dir.iterdir() if f.suffix == ".gz"]
+            with os.scandir(self.cache_dir) as it:
+                stats = [e.stat() for e in it if e.name.endswith(".gz")]
         except FileNotFoundError:
             return empty
-        if not files:
+        if not stats:
             return empty
-        stats = [f.stat() for f in files]
         return CacheInfo(
-            file_count=len(files),
+            file_count=len(stats),
             total_size_bytes=sum(s.st_size for s in stats),
             last_build=datetime.fromtimestamp(max(s.st_mtime for s in stats)),
         )
@@ -202,9 +208,25 @@ class DocsCache(GzipJSONCache[FileDocState]):
     LABEL = "Docs cache"
 
     def to_dict(self, state: FileDocState) -> dict[str, Any]:
+        """Serialize the provided file documentation state to a dictionary.
+
+        Args:
+            state: The current documentation state for a file.
+
+        Returns:
+            A dictionary representation of the state.
+        """
         return asdict(state)
 
     def from_dict(self, payload: dict[str, Any]) -> FileDocState:
+        """Reconstruct a FileDocState object from a serialized dictionary.
+
+        Args:
+            payload: The dictionary containing serialized documentation state data.
+
+        Returns:
+            The restored FileDocState instance.
+        """
         return FileDocState(
             path=payload.get("path", ""),
             file_hash=payload.get("file_hash", ""),
@@ -239,6 +261,14 @@ class ScoutCache(GzipJSONCache[FileSummary]):
     LABEL = "Scout cache"
 
     def to_dict(self, state: FileSummary) -> dict[str, Any]:
+        """Serialize scout file summary metadata into a dictionary.
+
+        Args:
+            state: The file summary metadata to serialize.
+
+        Returns:
+            A dictionary containing the flattened summary fields.
+        """
         return {
             "path": state.path,
             "summary": state.summary,
@@ -259,6 +289,14 @@ class ScoutCache(GzipJSONCache[FileSummary]):
         }
 
     def from_dict(self, payload: dict[str, Any]) -> FileSummary:
+        """Reconstruct a FileSummary object from a serialized dictionary.
+
+        Args:
+            payload: The dictionary containing scout summary data.
+
+        Returns:
+            The restored FileSummary instance.
+        """
         return FileSummary(
             path=payload.get("path", ""),
             summary=payload.get("summary", ""),

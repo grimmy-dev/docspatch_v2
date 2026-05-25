@@ -8,7 +8,7 @@ import typer
 from docspatch.cache import DocsCache
 from docspatch.checkpoints.janitor import start_janitor, vacuum_checkpoints
 from docspatch.checkpoints.runs import discard_incomplete_runs, list_incomplete_runs, pick_last_run
-from docspatch.llm import LLMClient, tier_for_model
+from docspatch.llm import LLMClient, tier_for_model, validate_api_key
 from docspatch.pipelines.docs import run_docs
 from docspatch.pipelines.docs.flags import RunFlags, preview_check, validate_run_flags
 from docspatch.pipelines.docs.generator import LLMDocstringGenerator
@@ -51,7 +51,7 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
 
         store = default_store(repo_root)
         p = prompter or QuestionaryPrompter()
-        selections = ensure_configured(store, p)
+        selections = ensure_configured(store, p, validate_api_key)
         settings = RunSettings.from_config(store.read())
         tier = tier_for_model(selections.provider, selections.generator_model)
         log.debug("config loaded: provider=%s tier=%s", selections.provider, tier)

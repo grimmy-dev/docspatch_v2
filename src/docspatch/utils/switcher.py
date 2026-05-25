@@ -7,7 +7,7 @@ the user a chance to swap providers/tiers without restarting the run.
 
 from dataclasses import dataclass
 
-from docspatch.llm import TIER_CATALOGUE, LLMClient, resolve_tier_model
+from docspatch.llm import TIER_CATALOGUE, LLMClient, resolve_tier_model, validate_api_key
 from docspatch.schemas import Tier, as_provider, as_tier
 from docspatch.ui import Prompter, aprompt, console
 from docspatch.utils.config import ConfigStore
@@ -51,7 +51,7 @@ async def offer_switch(
 
     new_provider = str(await aprompt(p.select, "New provider:", _PROVIDERS, default=current_provider))
     new_tier = str(await aprompt(p.select, "New tier:", _tier_choices(new_provider), default="balanced"))
-    new_key = str(await aprompt(select_api_key, new_provider, store, p, reconfigure=False))
+    new_key = str(await aprompt(select_api_key, new_provider, store, p, validate_api_key, reconfigure=False))
 
     store.write_global({"provider": new_provider, f"api_key_{new_provider}": new_key})
     store.write_repo(
