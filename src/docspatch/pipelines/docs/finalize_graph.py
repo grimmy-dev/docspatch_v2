@@ -44,6 +44,8 @@ async def drive_finalize(
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     graph = build_finalize_graph(ctx, saver)
 
+    # Any: graph input is the initial state dict on the first turn, then a
+    # Command(resume=...) on every loop after an interrupt — no shared static type.
     next_input: Any = {"entries": entries}
     while True:
         result = await graph.ainvoke(next_input, config=config)

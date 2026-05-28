@@ -3,7 +3,7 @@
 from typer.testing import CliRunner
 
 from docspatch.cli import app
-from docspatch.schemas import DocspatchConfig, ScopedValue
+from docspatch.schemas import DocspatchConfig, Scope, ScopedValue
 
 runner = CliRunner()
 
@@ -12,7 +12,7 @@ def make_config(
     provider: str | None = None,
     api_key: str | None = None,
     generator_model: str | None = None,
-    scope: str = "default",
+    scope: Scope = "default",
 ) -> DocspatchConfig:
     return DocspatchConfig(
         provider=ScopedValue(provider, scope),

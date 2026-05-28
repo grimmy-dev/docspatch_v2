@@ -1,5 +1,7 @@
 """Batch docstring generator: one LLM call per batch, with anti-LLM-ese retries."""
 
+from typing import Protocol
+
 from docspatch.llm import LLMClient, TokenUsage
 from docspatch.pipelines.docs.prompts import (
     DocstringItem,
@@ -10,6 +12,22 @@ from docspatch.schemas import BatchDocstringOutput
 
 BANNED_RETRY_LIMIT = 2
 """Max silent retries per key when a banned phrase is detected."""
+
+
+class DocstringGenerator(Protocol):
+    """What the docs pipeline needs from a generator.
+
+    The pipeline owns ``remarks``: it assigns the resolved run-wide instruction
+    after restoring it from checkpoint metadata, so the attribute is writable.
+    """
+
+    remarks: str | None
+
+    async def generate_batch(
+        self, items: list[DocstringItem], tone: str
+    ) -> tuple[dict[str, str], TokenUsage]:
+        """Return ``({id: docstring}, usage)`` for ``items``."""
+        ...
 
 
 class LLMDocstringGenerator:

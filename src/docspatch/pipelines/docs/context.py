@@ -14,13 +14,13 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from docspatch.cache import DocsCache
 from docspatch.checkpoints.ledger import TokenLedger
-from docspatch.pipelines.docs.generator import LLMDocstringGenerator
+from docspatch.pipelines.docs.generator import DocstringGenerator
 from docspatch.pipelines.docs.planner import Target
 from docspatch.pipelines.docs.state import GenKey
 from docspatch.ui import Prompter
 from docspatch.ui.progress import BarHandle
 
-SwitchHandler = Callable[[LLMDocstringGenerator], Awaitable[LLMDocstringGenerator | None]]
+SwitchHandler = Callable[[DocstringGenerator], Awaitable[DocstringGenerator | None]]
 """Returns a replacement generator on exhaustion, or ``None`` to abort."""
 
 ReviewHandler = Callable[[dict[str, Any]], dict[str, Any]]
@@ -37,7 +37,7 @@ class GraphContext:
 
     def __init__(
         self,
-        generator: LLMDocstringGenerator,
+        generator: DocstringGenerator,
         sem: asyncio.Semaphore,
         repo_root: Path,
         tone: str,

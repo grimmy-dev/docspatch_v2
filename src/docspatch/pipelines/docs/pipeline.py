@@ -28,7 +28,7 @@ from docspatch.pipelines.docs.context import (
 from docspatch.pipelines.docs.finalize_graph import drive_finalize
 from docspatch.pipelines.docs.flags import RunFlags, resolve_remarks
 from docspatch.pipelines.docs.generate_graph import run_generation
-from docspatch.pipelines.docs.generator import LLMDocstringGenerator
+from docspatch.pipelines.docs.generator import DocstringGenerator
 from docspatch.pipelines.docs.plan_graph import batch_targets, build_plan_graph
 from docspatch.pipelines.docs.state import DocsResult, FinalizeResult, GeneratedDoc, PlanState
 from docspatch.ui import Prompter, cache_hit_row, console, cost_rows, progress_bar, render_summary
@@ -76,7 +76,7 @@ def _render_docs_summary(
 
 async def run_docs(
     paths: list[Path],
-    generator: LLMDocstringGenerator,
+    generator: DocstringGenerator,
     *,
     tone: str,
     repo_root: Path,

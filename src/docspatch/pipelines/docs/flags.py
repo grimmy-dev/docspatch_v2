@@ -57,7 +57,7 @@ def validate_run_flags(flags: RunFlags) -> None:
     }
     for a, b, hint in _CONFLICTS:
         if active[a] and active[b]:
-            raise ConfigError(f"--{a} and --{b} cannot be used together.", hint=hint)
+            raise ConfigError.conflicting_flags(a, b, hint)
 
 
 # ---- --remarks resolution --------------------------------------------------

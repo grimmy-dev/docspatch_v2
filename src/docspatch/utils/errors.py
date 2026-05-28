@@ -131,6 +131,16 @@ class ConfigError(DocspatchError):
         return cls(f"Key validation failed: {exc}", hint="Check your key.")
 
     @classmethod
+    def conflicting_flags(cls, a: str, b: str, hint: str) -> ConfigError:
+        """Create an error for two run flags that cannot be combined."""
+        return cls(f"--{a} and --{b} cannot be used together.", hint=hint)
+
+    @classmethod
+    def no_runs_to_resume(cls) -> ConfigError:
+        """Create an error when no incomplete run exists to resume."""
+        return cls("No incomplete runs to resume.", hint="Start a fresh run with `dp docs`.")
+
+    @classmethod
     def headless_no_input(cls, question: str) -> ConfigError:
         """Create an error for when input is requested in a headless mode."""
         return cls(

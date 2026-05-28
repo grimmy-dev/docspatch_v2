@@ -11,7 +11,7 @@ from docspatch.checkpoints.runs import discard_incomplete_runs, list_incomplete_
 from docspatch.llm import LLMClient, tier_for_model, validate_api_key
 from docspatch.pipelines.docs import run_docs
 from docspatch.pipelines.docs.flags import RunFlags, preview_check, validate_run_flags
-from docspatch.pipelines.docs.generator import LLMDocstringGenerator
+from docspatch.pipelines.docs.generator import DocstringGenerator, LLMDocstringGenerator
 from docspatch.schemas import RunSettings
 from docspatch.ui import Prompter, QuestionaryPrompter, console
 from docspatch.ui.prompter import is_interactive
@@ -87,7 +87,7 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
                 allow_rerun=payload["allow_rerun"],
             )
 
-        async def handle_exhaustion(current: LLMDocstringGenerator) -> LLMDocstringGenerator | None:
+        async def handle_exhaustion(current: DocstringGenerator) -> DocstringGenerator | None:
             switched = await offer_switch(
                 store,
                 p,

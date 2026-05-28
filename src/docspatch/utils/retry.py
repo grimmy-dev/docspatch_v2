@@ -5,6 +5,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from docspatch.utils.errors import TransientExhausted
+
 OnRetry = Callable[[int, float], None]
 IsRetriable = Callable[[Exception], bool]
 
@@ -46,7 +48,10 @@ class RateLimitGate:
             try:
                 result = await fn()
                 async with self.lock:
+                    # Clear the armed window too — provider recovered, no reason for
+                    # subsequent siblings to keep sleeping until a stale unblock_at.
                     self.attempt = 0
+                    self.unblock_at = 0.0
                 return result
             except Exception as exc:
                 if not is_retriable(exc):
@@ -58,7 +63,7 @@ class RateLimitGate:
                         if self.attempt >= self.policy.max_attempts:
                             raised = self.attempt
                             self.attempt = 0
-                            raise type(exc)(f"retry budget exhausted after {raised} attempts") from last_exc
+                            raise TransientExhausted.after(raised, last_exc) from last_exc
                         self.unblock_at = time.monotonic() + self.policy.delay_for(self.attempt - 1)
 
     async def wait_if_blocked(self) -> None:

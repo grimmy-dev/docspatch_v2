@@ -94,7 +94,8 @@ async def run_scout(
     """
     # Reuse planner output when given; otherwise read+compress here (offloaded).
     if precomputed_misses is not None:
-        hits, misses = [], list(precomputed_misses)
+        hits: list[str] = []
+        misses = list(precomputed_misses)
     else:
         hits, misses = await asyncio.to_thread(partition_paths, paths, ctx_store)
     for path in hits:

@@ -24,13 +24,34 @@ def run_lock(repo_root: Path) -> Iterator[None]:
     # and a stale lock is auto-cleared on the next run via _clear_or_fail.
     lock = repo_root / ".docspatch" / "run.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
-    if lock.exists():
-        _clear_or_fail(lock)
-    lock.write_text(json.dumps({"pid": os.getpid(), "started": time.time()}))
+    _acquire(lock)
     try:
         yield
     finally:
         lock.unlink(missing_ok=True)
+
+
+def _acquire(lock: Path) -> None:
+    """Create the lock file atomically. Clear a stale lock and retry once.
+
+    Uses ``O_CREAT | O_EXCL`` so two concurrent callers cannot both believe they
+    own the lock: at most one ``open`` call succeeds, the others raise
+    ``FileExistsError``. The loser inspects the existing lock and either fails
+    (live owner) or clears it (stale/corrupt) and retries the exclusive open.
+    """
+    payload = json.dumps({"pid": os.getpid(), "started": time.time()}).encode()
+    for _ in range(2):
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            _clear_or_fail(lock)
+            continue
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(payload)
+        return
+    # Second attempt also lost the race: somebody acquired the lock between our
+    # clear and re-open. Treat as a live owner so we don't spin.
+    _clear_or_fail(lock)
 
 
 def _clear_or_fail(lock: Path) -> None:

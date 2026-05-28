@@ -5,6 +5,7 @@ version = "0.1.0"
 description = "AI-powered documentation generation for Python projects"
 readme = "README.md"
 requires-python = ">=3.14"
+authors = [{name = "grimmy_dev", email = "grimmy024@gmail.com"}]
 dependencies = [
     "typer>=0.15",
     "rich>=13",

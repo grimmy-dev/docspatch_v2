@@ -132,6 +132,12 @@ class GzipJSONCache[T](ABC):
             raise CacheError.write_failed(path, exc) from exc
         self._memo[path] = state
 
+    def delete(self, path: str) -> None:
+        """Drop the cached entry for ``path``. No-op when no entry exists."""
+        entry = self.cache_dir / cache_key(path)
+        entry.unlink(missing_ok=True)
+        self._memo[path] = None
+
     def info(self) -> CacheInfo:
         """Return file count, total size, and last-build timestamp."""
         empty = CacheInfo(file_count=0, total_size_bytes=0, last_build=None)

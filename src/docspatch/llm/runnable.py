@@ -99,25 +99,31 @@ class TypedRunnable[T]:
         Returns the parsed value and the real token usage of every call made
         (a retry is billed too). A second parse failure raises ``ParseFailed``.
         """
-        try:
-            return await self._call(prompt)
-        except _PARSE_ERRORS:
-            pass
-        try:
-            return await self._call(prompt + PARSE_RETRY_SUFFIX)
-        except _PARSE_ERRORS as exc:
-            raise ParseFailed.after_retry(exc) from exc
-
-    async def _call(self, prompt: str) -> tuple[T, TokenUsage]:
-        """One gated call. Parse errors propagate raw; everything else is wrapped."""
+        # One handler shared across both attempts so a parse-retry still bills the
+        # discarded first call. Provider tokens are committed regardless of whether
+        # the response validated.
         handler = UsageMetadataCallbackHandler()
         try:
-            value = await self.gate.execute(
+            value = await self._call(prompt, handler)
+        except _PARSE_ERRORS:
+            try:
+                value = await self._call(prompt + PARSE_RETRY_SUFFIX, handler)
+            except _PARSE_ERRORS as exc:
+                raise ParseFailed.after_retry(exc) from exc
+        return value, _collected_usage(handler)
+
+    async def _call(self, prompt: str, handler: UsageMetadataCallbackHandler) -> T:
+        """One gated call recording usage into ``handler``. Parse errors propagate raw."""
+        try:
+            return await self.gate.execute(
                 lambda: self.chain.ainvoke(prompt, config={"callbacks": [handler]}),
                 is_transient,
             )
         except _PARSE_ERRORS:
             raise
+        except LLMError:
+            # Gate raises TransientExhausted directly; pass any domain LLM error through
+            # untouched so wrap_llm_error's text-scan classification cannot re-tag it.
+            raise
         except Exception as exc:
             raise wrap_llm_error(exc) from exc
-        return value, _collected_usage(handler)

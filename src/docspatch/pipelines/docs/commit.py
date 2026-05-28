@@ -134,6 +134,11 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
 
     committed = journal.committed_order()
     skipped: list[str] = []
+    # Remember the pre-commit cache entry for every file we mutate so a rollback
+    # can restore it. Without this, _rollback restores disk to original content
+    # while the cache still points at the post-insert hash, and the next run
+    # mis-detects every rolled-back file as edited on disk.
+    cache_snapshots: dict[str, FileDocState | None] = {}
 
     with status(f"Writing {len(by_file)} file(s)..."):
         for rel in sorted(by_file):
@@ -145,7 +150,7 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
             if _conflict(ctx, rel, source):
                 action = _resolve_conflict(ctx, rel)
                 if action == "abort":
-                    _rollback(ctx, journal, snapshot_dir)
+                    _rollback(ctx, journal, snapshot_dir, cache_snapshots)
                     return {"commit_error": f"commit aborted at {rel} — file changed on disk"}
                 if action == "skip":
                     skipped.append(rel)
@@ -164,7 +169,7 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
                 write_snapshot(snapshot_dir, rel, source)
                 atomic_write(path, new_source)
             except Exception as exc:  # noqa: BLE001 — any write failure rolls the sweep back
-                _rollback(ctx, journal, snapshot_dir)
+                _rollback(ctx, journal, snapshot_dir, cache_snapshots)
                 return {"commit_error": f"{rel}: {exc}"}
 
             new_hash = file_hash(new_source)
@@ -173,6 +178,7 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
                 # Stat after write so next run fast-skips via size+mtime.
                 st = path.stat()
                 prior = ctx.cache.get(rel)
+                cache_snapshots[rel] = prior
                 ctx.cache.set(
                     rel,
                     FileDocState(
@@ -207,10 +213,27 @@ def _resolve_conflict(ctx, rel: str) -> str:  # noqa: ANN001
     return str(choice.get("action", "skip"))
 
 
-def _rollback(ctx, journal: CommitJournal, snapshot_dir: Path) -> None:  # noqa: ANN001
-    """Restore every journalled file from its snapshot, then clear journal + snapshots."""
+def _rollback(  # noqa: ANN001
+    ctx,
+    journal: CommitJournal,
+    snapshot_dir: Path,
+    cache_snapshots: dict[str, FileDocState | None],
+) -> None:
+    """Restore every journalled file from its snapshot and revert the docs cache.
+
+    Disk and cache must stay in lockstep: if disk goes back to the pre-commit
+    content, the cache entry must follow. Otherwise the next run sees a cache
+    that recorded the post-insert hash for content that no longer matches and
+    flags every rolled-back file as edited-on-disk.
+    """
     for rel in journal.committed_order():
         atomic_write(ctx.repo_root / rel, read_snapshot(snapshot_dir, rel))
+        if ctx.cache is not None and rel in cache_snapshots:
+            prior = cache_snapshots[rel]
+            if prior is None:
+                ctx.cache.delete(rel)
+            else:
+                ctx.cache.set(rel, prior)
     journal.delete()
     shutil.rmtree(snapshot_dir, ignore_errors=True)
 

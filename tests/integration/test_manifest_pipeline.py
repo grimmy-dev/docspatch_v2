@@ -13,6 +13,8 @@ FAKE_USAGE = TokenUsage(input_tokens=100, output_tokens=30)
 
 
 class FakeGenerator:
+    remarks: str | None = None
+
     def __init__(self, docstring: str = "Doc.") -> None:
         self.canned = docstring
 

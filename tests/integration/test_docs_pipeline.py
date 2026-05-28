@@ -10,7 +10,7 @@ from docspatch.cache import DocsCache, FileDocState
 from docspatch.llm import TokenUsage
 from docspatch.pipelines.docs import run_docs
 from docspatch.pipelines.docs.flags import RunFlags
-from docspatch.pipelines.docs.generator import LLMDocstringGenerator
+from docspatch.pipelines.docs.generator import DocstringGenerator
 from docspatch.pipelines.docs.prompts import DocstringItem
 
 FAKE_USAGE = TokenUsage(input_tokens=40, output_tokens=12)
@@ -19,6 +19,8 @@ FAKE_USAGE = TokenUsage(input_tokens=40, output_tokens=12)
 
 class FakeGenerator:
     """Returns a canned docstring for every requested key. Records every call."""
+
+    remarks: str | None = None
 
     def __init__(self, docstring: str = "Compute the answer.\n\nReturns:\n    int: The answer.") -> None:
         self.canned = docstring
@@ -31,7 +33,7 @@ class FakeGenerator:
 
 def go(
     paths: list[Path],
-    generator: LLMDocstringGenerator,
+    generator: DocstringGenerator,
     *,
     tmp_path: Path,
     cache: DocsCache | None = None,
@@ -60,6 +62,8 @@ def go(
 
 class ParseFailingGenerator:
     """Raises ParseFailed on every batch — simulates schema validation exhaustion."""
+
+    remarks: str | None = None
 
     async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
         from docspatch.utils.errors import ParseFailed
@@ -301,6 +305,7 @@ def test_respects_concurrency_limit(tmp_path: Path) -> None:
         (pkg / f"m{i}.py").write_text(f"def f{i}():\n    return {i}\n")
 
     class TrackingGenerator:
+        remarks: str | None = None
         def __init__(self) -> None:
             self.in_flight = 0
             self.peak = 0
@@ -412,6 +417,7 @@ def test_partial_generation_persists_completed_batches(tmp_path: Path) -> None:
     (pkg / "b.py").write_text("def y():\n    return 2\n")
 
     class Halfway:
+        remarks: str | None = None
         def __init__(self) -> None:
             self.calls = 0
 
@@ -451,6 +457,7 @@ def test_resume_skips_completed_batches(tmp_path: Path) -> None:
     (pkg / "b.py").write_text("def y():\n    return 2\n")
 
     class Halfway:
+        remarks: str | None = None
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
 
@@ -462,7 +469,7 @@ def test_resume_skips_completed_batches(tmp_path: Path) -> None:
 
     run_id = "20260519-000000-abcdef"
 
-    async def decline(_g: LLMDocstringGenerator) -> None:
+    async def decline(_g: DocstringGenerator) -> None:
         return None
 
     asyncio.run(
@@ -519,12 +526,13 @@ def test_switch_handler_resumes_after_transient_exhausted(tmp_path: Path) -> Non
     (pkg / "b.py").write_text("def y():\n    return 2\n")
 
     class Exhausted:
+        remarks: str | None = None
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise TransientExhausted.after(3, RuntimeError("rate_limit"))
 
     good = FakeGenerator(docstring="after.")
 
-    async def handler(_current: LLMDocstringGenerator) -> LLMDocstringGenerator:
+    async def handler(_current: DocstringGenerator) -> DocstringGenerator:
         return good
 
     result = asyncio.run(
@@ -557,10 +565,11 @@ def test_switch_handler_decline_returns_partial(tmp_path: Path) -> None:
     (pkg / "a.py").write_text("def x():\n    return 1\n")
 
     class Exhausted:
+        remarks: str | None = None
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise TransientExhausted.after(3, RuntimeError("429"))
 
-    async def handler(_current: LLMDocstringGenerator) -> None:
+    async def handler(_current: DocstringGenerator) -> None:
         return None
 
     result = asyncio.run(
@@ -593,6 +602,7 @@ def test_completed_batches_not_reissued_after_switch(tmp_path: Path) -> None:
     (pkg / "c.py").write_text("def z():\n    return 3\n")
 
     class FirstOkRestExhausted:
+        remarks: str | None = None
         def __init__(self) -> None:
             self.calls = 0
 
@@ -604,7 +614,7 @@ def test_completed_batches_not_reissued_after_switch(tmp_path: Path) -> None:
 
     good = FakeGenerator(docstring="new.")
 
-    async def handler(_current: LLMDocstringGenerator) -> LLMDocstringGenerator:
+    async def handler(_current: DocstringGenerator) -> DocstringGenerator:
         return good
 
     asyncio.run(
@@ -760,12 +770,13 @@ def test_cancelled_mid_wave_invokes_switch_handler(tmp_path: Path) -> None:
     src.write_text("def x():\n    return 1\n")
 
     class Cancelling:
+        remarks: str | None = None
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise asyncio.CancelledError
 
     good = FakeGenerator(docstring="resumed.")
 
-    async def handler(_current: LLMDocstringGenerator) -> LLMDocstringGenerator:
+    async def handler(_current: DocstringGenerator) -> DocstringGenerator:
         return good
 
     result = asyncio.run(
@@ -788,6 +799,8 @@ def test_cancelled_mid_wave_invokes_switch_handler(tmp_path: Path) -> None:
 
 class TrackingGen:
     """Returns canned docstring v1 then v2; records every batch invocation."""
+
+    remarks: str | None = None
 
     def __init__(self, responses: list[str]) -> None:
         self.responses = list(responses)
@@ -875,6 +888,7 @@ def test_rerun_keeps_accepted_and_regenerates_only_rerun(tmp_path: Path) -> None
     src.write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n")
 
     class KeyedGen:
+        remarks: str | None = None
         def __init__(self) -> None:
             self.call = 0
 
@@ -1132,7 +1146,7 @@ def test_commit_resumes_at_next_uncommitted_file_after_kill(
     monkeypatch.setattr(commit_mod, "insert_docstrings", killer)
     run_id = "20260521-000000-aaaaaa"
 
-    def invoke(generator: LLMDocstringGenerator) -> object:
+    def invoke(generator: DocstringGenerator) -> object:
         return asyncio.run(
             run_docs(
                 [pkg / "a.py", pkg / "b.py"],
@@ -1199,13 +1213,14 @@ def test_hanging_call_times_out_and_switch_recovers(tmp_path: Path) -> None:
     src.write_text("def x():\n    return 1\n")
 
     class HangingGenerator:
+        remarks: str | None = None
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             await asyncio.sleep(30)  # never returns within call_timeout
             return {}, FAKE_USAGE
 
     healthy = FakeGenerator(docstring="recovered.")
 
-    async def handler(_current: LLMDocstringGenerator) -> LLMDocstringGenerator:
+    async def handler(_current: DocstringGenerator) -> DocstringGenerator:
         return healthy
 
     result = asyncio.run(
@@ -1236,6 +1251,7 @@ def test_hanging_call_without_switch_raises(tmp_path: Path) -> None:
     src.write_text("def x():\n    return 1\n")
 
     class HangingGenerator:
+        remarks: str | None = None
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             await asyncio.sleep(30)
             return {}, FAKE_USAGE

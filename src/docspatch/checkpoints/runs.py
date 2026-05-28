@@ -22,12 +22,17 @@ async def list_incomplete_runs(repo_root: Path) -> list[str]:
     db_path = repo_root / ".docspatch" / "checkpoints" / "docs.sqlite"
     if not db_path.exists():
         return []
-    seen: set[str] = set()
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-        async for tup in saver.alist(None):
-            thread_id = tup.config["configurable"]["thread_id"]
-            if not thread_id.startswith(("review-", "scout-")):
-                seen.add(thread_id)
+        return await _collect_resumable(saver)
+
+
+async def _collect_resumable(saver: AsyncSqliteSaver) -> list[str]:
+    """Docs run ids on an already-open saver, newest first."""
+    seen: set[str] = set()
+    async for tup in saver.alist(None):
+        thread_id = tup.config["configurable"]["thread_id"]
+        if not thread_id.startswith(("review-", "scout-")):
+            seen.add(thread_id)
     return sorted(seen, reverse=True)
 
 
@@ -38,10 +43,7 @@ def pick_last_run(run_ids: list[str]) -> str:
         ConfigError: When there is no incomplete run to resume.
     """
     if not run_ids:
-        raise ConfigError(
-            "No incomplete runs to resume.",
-            hint="Start a fresh run with `dp docs`.",
-        )
+        raise ConfigError.no_runs_to_resume()
     return run_ids[0]
 
 
@@ -51,5 +53,5 @@ async def discard_incomplete_runs(repo_root: Path) -> None:
     if not db_path.exists():
         return
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-        for thread_id in await list_incomplete_runs(repo_root):
+        for thread_id in await _collect_resumable(saver):
             await saver.adelete_thread(thread_id)
