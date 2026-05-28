@@ -28,14 +28,17 @@ class _Entry(TypedDict):
 
 
 def default_path() -> Path:
+    """Return the default path for storing API key validations."""
     return Path.home() / ".docspatch" / ".key_validation.json"
 
 
 def _hash(api_key: str) -> str:
+    """Generate a SHA256 hash for an API key."""
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
 def _load(path: Path) -> dict[str, _Entry]:
+    """Load cached validation entries from a file."""
     try:
         raw = json.loads(path.read_text())
     except OSError, json.JSONDecodeError:
@@ -44,6 +47,7 @@ def _load(path: Path) -> dict[str, _Entry]:
 
 
 def _save(path: Path, data: dict[str, _Entry]) -> None:
+    """Save validation entries to a persistent cache file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
 

@@ -1,25 +1,47 @@
-"""Determinate progress bar — used when total work units are known upfront.
+"""Determinate progress bar with status-line updates."""
 
-Yields an `advance(message=None)` callable so callers do not import rich
-directly. Nodes / pipelines invoke `advance` once per completed unit.
-"""
-
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskID, TextColumn, TimeElapsedColumn
 
 from docspatch.ui.console import console
 
-Advance = Callable[[str | None], None]
+
+@dataclass
+class BarHandle:
+    """Callable handle: ``bar(msg)`` advances, ``bar.set_status(msg)`` updates description only."""
+
+    bar: Progress
+    task: TaskID
+
+    def __call__(self, message: str | None = None) -> None:
+        """Advance the progress bar or update the current status message.
+
+        Args:
+            message: Optional update for the task description.
+        """
+        if message:
+            self.bar.update(self.task, description=message)
+        self.bar.advance(self.task)
+
+    def set_status(self, text: str) -> None:
+        """Update description without advancing — for retry / pause notices."""
+        self.bar.update(self.task, description=text)
+
+    def pause(self) -> None:
+        """Stop the live render — call before showing a blocking prompt."""
+        self.bar.stop()
+
+    def resume(self) -> None:
+        """Restart the live render after a prompt completes."""
+        self.bar.start()
 
 
 @contextmanager
-def progress_bar(total: int, description: str = "Working") -> Iterator[Advance]:
-    """Context manager yielding an `advance(message)` callable.
-
-    `transient=True` clears the bar on exit so terminal scrollback stays clean.
-    """
+def progress_bar(total: int, description: str = "Working") -> Iterator[BarHandle]:
+    """Yield a :class:`BarHandle`. ``transient=True`` clears on exit."""
     columns = (
         SpinnerColumn(),
         TextColumn("[bold]{task.description}"),
@@ -27,12 +49,6 @@ def progress_bar(total: int, description: str = "Working") -> Iterator[Advance]:
         TextColumn("{task.completed}/{task.total}"),
         TimeElapsedColumn(),
     )
-    with Progress(*columns, console=console, transient=True) as bar:
-        task_id = bar.add_task(description, total=total)
-
-        def advance(message: str | None = None) -> None:
-            if message:
-                bar.update(task_id, description=message)
-            bar.advance(task_id)
-
-        yield advance
+    with Progress(*columns, console=console, transient=True) as progress:
+        task_id = progress.add_task(description, total=total)
+        yield BarHandle(bar=progress, task=task_id)

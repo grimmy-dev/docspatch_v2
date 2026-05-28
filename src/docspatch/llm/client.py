@@ -6,45 +6,23 @@ from langchain_core.runnables import Runnable
 
 from docspatch.llm.catalogue import resolve_tier_model
 from docspatch.llm.factory import build_llm, build_validator_llm
-from docspatch.types.llm import Provider, Tier, as_provider, as_tier
+from docspatch.llm.runnable import LLM_RETRY, TypedRunnable, is_transient, wrap_llm_error
+from docspatch.schemas import Provider, Tier, as_provider, as_tier
 from docspatch.utils import key_cache
-from docspatch.utils.errors import LLMError, TransientExhausted
-from docspatch.utils.retry import OnRetry, RetryPolicy, retry_async
-
-LLM_RETRY = RetryPolicy(max_attempts=3, base_delay=2.0)
-TRANSIENT_MARKERS = ("rate_limit", "429", "503", "502", "timeout", "overloaded")
+from docspatch.utils.errors import ConfigError
+from docspatch.utils.retry import OnRetry, RateLimitGate
+from docspatch.utils.secrets import register_secret
 
 RetryCallback = OnRetry
 
-
-def is_transient(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(marker in msg for marker in TRANSIENT_MARKERS)
+__all__ = ["LLM_RETRY", "LLMClient", "RetryCallback", "is_transient", "validate_api_key", "wrap_llm_error"]
 
 
-def wrap_llm_error(exc: Exception) -> LLMError:
-    if is_transient(exc):
-        return TransientExhausted.after(LLM_RETRY.max_attempts, exc)
-    return LLMError.api_failure(exc)
-
-
-class RetryingChain[T]:
-    """Wraps a LangChain structured chain so ``ainvoke`` retries transient errors."""
-
-    def __init__(self, chain: Runnable[str, T], retry_cb: RetryCallback | None = None) -> None:
-        self._chain = chain
-        self._retry_cb = retry_cb
-
-    async def ainvoke(self, prompt: str) -> T:
-        try:
-            return await retry_async(
-                lambda: self._chain.ainvoke(prompt),
-                is_retriable=is_transient,
-                policy=LLM_RETRY,
-                on_retry=self._retry_cb,
-            )
-        except Exception as exc:
-            raise wrap_llm_error(exc) from exc
+def validate_api_key(provider: str, api_key: str) -> bool:
+    """True iff ``provider`` accepts ``api_key``. Thin wrapper for callers that
+    only need the boolean — avoids building a full :class:`LLMClient`.
+    """
+    return LLMClient(provider=provider, api_key=api_key).validate_key()
 
 
 class LLMClient:
@@ -57,18 +35,41 @@ class LLMClient:
         generator_tier: str = "fast",
         retry_cb: RetryCallback | None = None,
     ) -> None:
+        """Initialize the LLM client with a provider and specific settings.
+
+        Args:
+            provider: The name of the LLM provider.
+            api_key: The authentication key for the provider.
+            generator_tier: The performance tier for the generator model.
+            retry_cb: Optional callback for tracking retry attempts.
+        """
         self.provider: Provider = as_provider(provider)
         self.generator_tier: Tier = as_tier(generator_tier)
+        # Fail fast at the edge — empty key would surface as a cryptic provider error later.
+        if not api_key or not api_key.strip():
+            raise ConfigError.missing_api_key(self.provider)
         self._api_key = api_key
+        register_secret(api_key)  # mask this key in any later error/log text
         self.llm = build_llm(self.provider, api_key, self.generator_tier)
         self.retry_cb = retry_cb
+        self.gate = RateLimitGate(LLM_RETRY, on_retry=retry_cb)
 
     @property
     def scout_model(self) -> str:
+        """Retrieve the identifier for the scouting model.
+
+        Returns:
+            The name of the fast model suitable for scouting tasks.
+        """
         return resolve_tier_model(self.provider, "fast")
 
     @property
     def generator_model(self) -> str:
+        """Retrieve the identifier for the generator model.
+
+        Returns:
+            The name of the configured model for generation tasks.
+        """
         return resolve_tier_model(self.provider, self.generator_tier)
 
     def validate_key(self) -> bool:
@@ -88,9 +89,17 @@ class LLMClient:
         key_cache.mark_validated(self.provider, self._api_key)
         return True
 
-    def with_structured_output[T](self, schema: type[T]) -> RetryingChain[T]:
+    def with_structured_output[T](self, schema: type[T]) -> TypedRunnable[T]:
+        """Configure the client to produce output matching a specific schema.
+
+        Args:
+            schema: The Pydantic model class defining the desired structure.
+
+        Returns:
+            A runnable instance configured for structured output.
+        """
         base_chain = cast(
             Runnable[str, T],
             self.llm.with_structured_output(schema),
         )
-        return RetryingChain[T](base_chain, retry_cb=self.retry_cb)
+        return TypedRunnable[T](base_chain, self.gate)

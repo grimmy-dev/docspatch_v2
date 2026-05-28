@@ -9,8 +9,8 @@ import tomllib
 from unittest.mock import AsyncMock, MagicMock
 
 import docspatch.commands.init as init_cmd
-from docspatch.pipelines.scout import ScanPlan
-from docspatch.types.config import DocspatchConfig, ScopedValue
+from docspatch.pipelines.scout.state import ScanPlan
+from docspatch.schemas import DocspatchConfig, ScopedValue
 from docspatch.ui import ScriptedPrompter
 
 # Default scripted answers: provider → password → tier → tone → license → scout-confirm
@@ -23,12 +23,15 @@ def _patch_env(
     validate_key: bool = True,
     context_up_to_date: bool = True,
 ):
-    """Patch out LLMClient + cache scan. Returns (LLMClient mock cls, client instance)."""
+    """Patch out LLMClient + key validator + cache scan."""
     mock_client = MagicMock()
     mock_client.validate_key.return_value = validate_key
     mock_llm_cls = MagicMock(return_value=mock_client)
     monkeypatch.setattr("docspatch.pipelines.scout.pipeline.LLMClient", mock_llm_cls)
-    monkeypatch.setattr("docspatch.utils.selection.LLMClient", mock_llm_cls)
+    monkeypatch.setattr(
+        "docspatch.commands.init.validate_api_key",
+        lambda _provider, _key: validate_key,
+    )
     if context_up_to_date:
         scan = ScanPlan(uncached=(), cached=(), token_estimate=0)
     else:
@@ -233,7 +236,7 @@ def test_dp_init_adds_docspatch_to_gitignore(monkeypatch, tmp_path):
 
 def test_dp_init_skips_scout_when_context_up_to_date(monkeypatch, tmp_path):
     mock_scout = AsyncMock()
-    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.scout_files", mock_scout)
+    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.run_scout", mock_scout)
     _patch_env(monkeypatch, context_up_to_date=True)
 
     init_cmd.run(
@@ -250,11 +253,9 @@ def test_dp_init_skips_scout_when_context_up_to_date(monkeypatch, tmp_path):
 
 def test_dp_init_skip_choice_makes_no_llm_call(monkeypatch, tmp_path):
     mock_scout = AsyncMock()
-    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.scout_files", mock_scout)
+    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.run_scout", mock_scout)
 
-    mock_reader = MagicMock()
-    mock_reader.list_tracked_files.return_value = []
-    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.GitReader", lambda *a, **kw: mock_reader)
+    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.tracked_paths", lambda _root: [])
 
     _patch_env(monkeypatch, context_up_to_date=False)
     init_cmd.run(

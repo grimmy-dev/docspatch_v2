@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from docspatch.pipelines.scout.types import FileMiss
+from docspatch.pipelines.scout.state import FileMiss
 
 PATH_HEADER = "===== PATH: {path} ====="
 

@@ -12,7 +12,7 @@ from typing import Any
 import tomli_w
 
 from docspatch.constants import CONFIG_DEFAULTS, GLOBAL_CONFIG_KEYS, INT_CONFIG_KEYS, REPO_CONFIG_KEYS
-from docspatch.types.config import ConfigPatch, ConfigValue, DocspatchConfig, Scope, ScopedValue
+from docspatch.schemas import ConfigPatch, ConfigValue, DocspatchConfig, Scope, ScopedValue
 from docspatch.utils.errors import ConfigError
 from docspatch.utils.fs import atomic_write
 
@@ -44,6 +44,7 @@ class ConfigStore:
     # ── reads ────────────────────────────────────────────────────────────
 
     def read(self) -> DocspatchConfig:
+        """Load the combined documentation configuration from storage."""
         return load_config(global_path=self.global_path, repo_path=self.repo_path)
 
     def api_key_for(self, provider: str) -> str | None:
@@ -62,9 +63,11 @@ class ConfigStore:
     # ── writes ───────────────────────────────────────────────────────────
 
     def write_global(self, patch: ConfigPatch) -> None:
+        """Persist a patch to the global configuration file."""
         merge_write(self.global_path, patch)
 
     def write_repo(self, patch: ConfigPatch) -> None:
+        """Persist a patch to the repository-specific configuration file."""
         merge_write(self.repo_path, patch)
 
     def set(self, key: str, raw_value: str) -> WrittenKey:
@@ -138,6 +141,7 @@ def load_config(global_path: Path | None = None, repo_path: Path | None = None) 
         tone=resolve("tone"),
         batch_token_limit=resolve("batch_token_limit"),
         concurrency_limit=resolve("concurrency_limit"),
+        call_timeout=resolve("call_timeout"),
     )
 
 

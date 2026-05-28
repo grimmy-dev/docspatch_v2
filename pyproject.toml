@@ -5,6 +5,7 @@ version = "0.1.0"
 description = "AI-powered documentation generation for Python projects"
 readme = "README.md"
 requires-python = ">=3.14"
+authors = [{name = "grimmy_dev", email = "grimmy024@gmail.com"}]
 dependencies = [
     "typer>=0.15",
     "rich>=13",
@@ -15,6 +16,9 @@ dependencies = [
     "tomli-w>=1.2.0",
     "libcst>=1.8.6",
     "mypy>=2.1.0",
+    "pathspec>=1.1.1",
+    "langgraph>=1.2.0",
+    "langgraph-checkpoint-sqlite>=3.1.0",
 ]
 
 [project.scripts]
@@ -31,6 +35,7 @@ packages = ["src/docspatch"]
 dev = [
     "pytest>=8",
     "pytest-cov>=6",
+    "pytest-asyncio>=1",
 ]
 
 [tool.pytest.ini_options]

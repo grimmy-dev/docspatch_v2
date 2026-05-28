@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from docspatch.constants import TONES
-from docspatch.llm import TIER_CATALOGUE, LLMClient, resolve_tier_model
-from docspatch.types.llm import as_provider
+from docspatch.llm import TIER_CATALOGUE, resolve_tier_model
+from docspatch.schemas import as_provider
 from docspatch.ui import Prompter, console, status
 from docspatch.utils.config import ConfigStore
 from docspatch.utils.errors import ConfigError
@@ -33,10 +33,40 @@ class Selections:
     tone: str
 
 
-def gather_selections(store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> Selections:
+# Provider + api_key → True iff the key is accepted. Injected by callers so
+# selection.py stays free of LLM-client imports (adapter isolation).
+ValidateKey = Callable[[str, str], bool]
+
+
+def ensure_configured(
+    store: ConfigStore,
+    p: Prompter,
+    validate_key: ValidateKey,
+    *,
+    reconfigure: bool = False,
+) -> Selections:
+    """Gather provider/key/model/tone, persist, return ``Selections``.
+
+    Reused by any command that needs an authenticated LLM. Prompts only for
+    fields not already on disk; ``reconfigure=True`` forces every prompt.
+    Persistence happens once, after every prompt completes, so a Ctrl-C
+    mid-prompt leaves config untouched.
+    """
+    selections = gather_selections(store, p, validate_key, reconfigure=reconfigure)
+    persist(store, selections)
+    return selections
+
+
+def gather_selections(
+    store: ConfigStore,
+    p: Prompter,
+    validate_key: ValidateKey,
+    *,
+    reconfigure: bool = False,
+) -> Selections:
     """Collect every config field needed by ``dp init`` in deterministic order."""
     provider = select_provider(store, p, reconfigure=reconfigure)
-    api_key = select_api_key(provider, store, p, reconfigure=reconfigure)
+    api_key = select_api_key(provider, store, p, validate_key, reconfigure=reconfigure)
     generator_model = select_tier(provider, store, p, reconfigure=reconfigure)
     tone = select_tone(store, p, reconfigure=reconfigure)
     return Selections(provider=provider, api_key=api_key, generator_model=generator_model, tone=tone)
@@ -61,22 +91,32 @@ def persist(store: ConfigStore, selections: Selections) -> None:
 
 
 def select_provider(store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> str:
+    """Determine the preferred LLM provider."""
     existing = store.read().provider
     return select_or_skip("provider", existing.value, existing.scope, lambda: ask_provider(p), reconfigure)
 
 
-def select_api_key(provider: str, store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> str:
+def select_api_key(
+    provider: str,
+    store: ConfigStore,
+    p: Prompter,
+    validate_key: ValidateKey,
+    *,
+    reconfigure: bool = False,
+) -> str:
+    """Retrieve or prompt for a valid API key."""
     stored = store.api_key_for(provider)
     return select_or_skip(
         f"api_key_{provider}",
         stored,
         "global" if stored else "default",
-        lambda: ask_api_key(provider, p),
+        lambda: ask_api_key(provider, p, validate_key),
         reconfigure,
     )
 
 
 def select_tier(provider: str, store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> str:
+    """Select the generation model tier."""
     existing = store.read().generator_model
     return select_or_skip(
         "generator_model",
@@ -88,6 +128,7 @@ def select_tier(provider: str, store: ConfigStore, p: Prompter, *, reconfigure: 
 
 
 def select_tone(store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> str:
+    """Select the desired documentation style."""
     existing = store.read().tone
     return select_or_skip("tone", existing.value, existing.scope, lambda: ask_tone(p), reconfigure)
 
@@ -134,17 +175,18 @@ def select_or_skip(
 
 
 def ask_provider(p: Prompter) -> str:
+    """Ask the user to select an LLM provider."""
     choice = str(p.select("Select LLM provider:", ["anthropic", "openai", "gemini"]))
     console.print(f"[green]✓[/green] provider: {choice}")
     return choice
 
 
-def ask_api_key(provider: str, p: Prompter) -> str:
+def ask_api_key(provider: str, p: Prompter, validate_key: ValidateKey) -> str:
+    """Prompt for an API key and verify it via the injected ``validate_key`` callback."""
     api_key = p.password(f"Enter {provider} API key:")
     try:
         with status(f"Validating {provider} API key..."):
-            client = LLMClient(provider=provider, api_key=api_key)
-            valid = client.validate_key()
+            valid = validate_key(provider, api_key)
     except Exception as exc:
         raise ConfigError.key_validation_failed(exc) from exc
     if not valid:
@@ -154,6 +196,7 @@ def ask_api_key(provider: str, p: Prompter) -> str:
 
 
 def ask_tier(provider: str, p: Prompter) -> str:
+    """Ask the user to choose an LLM model tier."""
     tiers = TIER_CATALOGUE[as_provider(provider)]
     fast_model = resolve_tier_model(provider, "fast")
     console.print(f"[dim]Scout model (fixed): {fast_model} (Fast tier)[/dim]")
@@ -171,13 +214,14 @@ def ask_tier(provider: str, p: Prompter) -> str:
         )
         choices[label] = t.tier
 
-    tier = str(p.select("Select generator tier:", choices, default="balanced"))
+    tier = str(p.select("Select generator tier:", choices))
     model = resolve_tier_model(provider, tier)
     console.print(f"[green]✓[/green] generator: {model} ({tier})")
     return model
 
 
 def ask_tone(p: Prompter) -> str:
+    """Ask the user to choose a documentation tone."""
     choices = {f"{k} — {v}": k for k, v in TONES.items()}
     tone = str(p.select("Select documentation tone:", choices))
     console.print(f"[green]✓[/green] tone: {tone}")
@@ -185,6 +229,7 @@ def ask_tone(p: Prompter) -> str:
 
 
 def update_pyproject_license(pyproject: Path, license_name: str) -> None:
+    """Append a license entry to a pyproject.toml file."""
     content = pyproject.read_text()
     if "[project]" in content and "license" not in content:
         new_lines: list[str] = []

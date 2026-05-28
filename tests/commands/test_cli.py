@@ -1,4 +1,4 @@
-"""CLI behavior tests for Slice 1."""
+"""CLI behavior tests: command registration, error handling, --debug."""
 
 from typer.testing import CliRunner
 
@@ -6,8 +6,7 @@ from docspatch.cli import app
 
 runner = CliRunner()
 
-SUBCOMMANDS = ["init", "docs", "readme", "clg", "config", "cleanup", "cache"]
-STUB_SUBCOMMANDS = ["docs", "readme", "clg", "cache"]
+SUBCOMMANDS = ["init", "docs", "config", "cleanup"]
 
 
 def test_help_exits_zero():
@@ -21,65 +20,78 @@ def test_help_lists_all_subcommands():
         assert cmd in result.output
 
 
-def test_stubs_print_not_implemented_and_exit_zero():
-    for cmd in STUB_SUBCOMMANDS:
-        result = runner.invoke(app, [cmd])
-        assert result.exit_code == 0, f"{cmd} exited {result.exit_code}"
-        assert "not yet implemented" in result.output, f"{cmd} missing stub message"
+def test_help_hides_unimplemented_commands():
+    """README/changelog/cache are not built yet — they must not appear in help."""
+    result = runner.invoke(app, ["--help"])
+    for cmd in ("readme", "clg", "cache"):
+        assert cmd not in result.output
 
 
-def test_init_command_wired_not_stub(monkeypatch):
+def test_init_command_wired(monkeypatch):
     called = []
     monkeypatch.setattr("docspatch.commands.init.run", lambda debug=False, **kw: called.append(True))
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0
     assert called, "init.run was not called"
-    assert "not yet implemented" not in result.output
 
 
-def test_debug_flag_accepted_without_error():
-    for cmd in ["docs", "readme", "clg"]:
-        result = runner.invoke(app, [cmd, "--debug"])
-        assert result.exit_code == 0, f"{cmd} --debug exited {result.exit_code}"
+def test_debug_flag_accepted_without_error(monkeypatch):
+    monkeypatch.setattr("docspatch.commands.cleanup.run", lambda *a, **kw: None)
+    result = runner.invoke(app, ["cleanup", "--debug"])
+    assert result.exit_code == 0
 
 
-def test_docspatch_error_caught_by_cli_handler(monkeypatch):
-    """CLI handler catches DocspatchError, prints message+hint, exits 1."""
-    import docspatch.cli as cli_module
-    from docspatch.utils.errors import DocspatchError
+def test_docspatch_error_shows_code_and_hint(monkeypatch):
+    """CLI handler renders `[code] message` + hint and exits with the mapped code."""
+    from docspatch.utils.errors import ConfigError
 
-    def raising_stub(debug: bool = False):
-        raise DocspatchError("something broke", "try this fix")
+    def boom(*a, **kw):
+        raise ConfigError("something broke", "try this fix")
 
-    monkeypatch.setattr(cli_module, "stub_command", raising_stub)
-
-    result = runner.invoke(app, ["docs"], catch_exceptions=False)
+    monkeypatch.setattr("docspatch.commands.cleanup.run", boom)
+    result = runner.invoke(app, ["cleanup"], catch_exceptions=False)
     assert result.exit_code == 1
+    assert "docspatch.config" in result.output
     assert "something broke" in result.output
     assert "try this fix" in result.output
 
 
+def test_exit_code_reflects_error_class(monkeypatch):
+    """A transient LLM error exits 2; an internal cache error exits 3."""
+    from docspatch.utils.errors import CacheError, LLMError
+
+    monkeypatch.setattr("docspatch.commands.cleanup.run", lambda *a, **kw: (_ for _ in ()).throw(LLMError("down")))
+    assert runner.invoke(app, ["cleanup"]).exit_code == 2
+
+    monkeypatch.setattr("docspatch.commands.cleanup.run", lambda *a, **kw: (_ for _ in ()).throw(CacheError("corrupt")))
+    assert runner.invoke(app, ["cleanup"]).exit_code == 3
+
+
+def test_unexpected_error_exits_three(monkeypatch):
+    """A non-DocspatchError is an internal bug — exit 3."""
+    monkeypatch.setattr("docspatch.commands.cleanup.run", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("oops")))
+    result = runner.invoke(app, ["cleanup"])
+    assert result.exit_code == 3
+    assert "Unexpected error" in result.output
+
+
 def test_debug_flag_reraises_docspatch_error(monkeypatch):
-    """--debug causes DocspatchError to propagate instead of clean exit."""
-    import docspatch.cli as cli_module
+    """--debug propagates the exception so the full traceback shows."""
     from docspatch.utils.errors import DocspatchError
 
-    def raising_stub(debug: bool = False):
-        raise DocspatchError("boom", "hint")
-
-    monkeypatch.setattr(cli_module, "stub_command", raising_stub)
-
-    result = runner.invoke(app, ["docs", "--debug"])
+    monkeypatch.setattr("docspatch.commands.cleanup.run", lambda *a, **kw: (_ for _ in ()).throw(DocspatchError("boom")))
+    result = runner.invoke(app, ["cleanup", "--debug"])
     assert result.exit_code != 0
     assert isinstance(result.exception, DocspatchError)
 
 
-def test_init_docspatch_error_shows_clean_message(monkeypatch):
-    """DocspatchError in init.run() shows message+hint, exits 1."""
+def test_debug_flag_shows_error_context(monkeypatch):
+    """--debug expands the context dict; without it the context stays hidden."""
     from docspatch.utils.errors import ConfigError
 
-    monkeypatch.setattr("docspatch.commands.init.run", lambda **kw: (_ for _ in ()).throw(ConfigError("bad key", "check it")))
-    result = runner.invoke(app, ["init"])
-    assert result.exit_code == 1
-    assert "bad key" in result.output
-    assert "check it" in result.output
+    def boom(*a, **kw):
+        raise ConfigError("bad", "fix it", context={"path": "src/app.py"})
+
+    monkeypatch.setattr("docspatch.commands.cleanup.run", boom)
+    assert "src/app.py" not in runner.invoke(app, ["cleanup"]).output
+    assert "src/app.py" in runner.invoke(app, ["cleanup", "--debug"]).output

@@ -1,39 +1,41 @@
-"""End-to-end scout pre-build: scan → estimate → confirm → execute.
+"""``dp init`` scout wrapper: scan, estimate, confirm, run, report.
 
-Wraps :func:`scout_files` with the UX needed by ``dp init`` and any other
-command that wants to refresh the cache up front: cost panel, confirmation
-prompt, progress bar, retry countdown, exhaustion-driven provider switch.
+Adds the UX around :func:`run_scout` — cost panel, confirmation prompt,
+progress bar, exhaustion-driven provider switch.
 """
 
 import asyncio
 from pathlib import Path
 
-from docspatch.context_store import ContextStore
-from docspatch.llm import LLM_RETRY, LLMClient
+from docspatch.cache import ScoutCache
+from docspatch.llm import LLMClient, TokenUsage
 from docspatch.llm.catalogue import tier_info
+from docspatch.llm.pricing import estimate_cost
+from docspatch.pipelines.scout.graph import run_scout
 from docspatch.pipelines.scout.planner import plan_uncached
-from docspatch.pipelines.scout.runner import scout_files
-from docspatch.pipelines.scout.types import ScanPlan
-from docspatch.ui import Prompter, console, kv_panel, progress_bar, status
+from docspatch.pipelines.scout.state import ScanPlan, ScoutResult
+from docspatch.schemas import RunSettings
+from docspatch.ui import Prompter, console, cost_panel, cost_rows, progress_bar, render_summary, status
+from docspatch.ui.retry_display import RetryDisplay
 from docspatch.utils.config import ConfigStore
-from docspatch.utils.errors import GitError
-from docspatch.utils.git_reader import GitReader
-from docspatch.utils.pricing import estimate_cost
+from docspatch.utils.errors import PathError
+from docspatch.utils.ignore import load_docsignore
+from docspatch.utils.scope import discover_targets
 from docspatch.utils.switcher import offer_switch
 
 
 def pre_build(
     repo_root: Path,
-    ctx_store: ContextStore,
+    ctx_store: ScoutCache,
     store: ConfigStore,
     provider: str,
     api_key: str,
     p: Prompter,
 ) -> None:
-    """Optionally refresh the scout cache for every tracked Python file.
+    """Refresh the scout cache for every tracked Python file.
 
-    No-op when the repo has no tracked files, the cache is already current, or
-    the user declines the confirmation.
+    No-op when the repo has no tracked files, the cache is current, or the user
+    declines the confirmation.
     """
     paths = tracked_paths(repo_root)
     if not paths:
@@ -56,11 +58,17 @@ def pre_build(
 
 
 def tracked_paths(repo_root: Path) -> list[str]:
-    """Return git-tracked Python files as repo-relative POSIX strings. Empty list on failure."""
+    """Every repo ``.py`` file minus ``.docsignore`` matches, repo-relative.
+
+    Routes through the shared :func:`discover_targets` entrypoint so scout sees
+    the same file list as ``dp docs``. Empty list when the repo has no Python.
+    """
+    root = repo_root.resolve()
     try:
-        return GitReader(cwd=repo_root).list_tracked_files()
-    except GitError:
+        found = discover_targets([Path(".")], root, ignore=load_docsignore(root))
+    except PathError:
         return []
+    return [p.relative_to(root).as_posix() for p in found]
 
 
 def print_estimate(provider: str, scan: ScanPlan) -> None:
@@ -68,13 +76,14 @@ def print_estimate(provider: str, scan: ScanPlan) -> None:
     fast_info = tier_info(provider, "fast")
     est = estimate_cost(provider, "fast", scan.token_estimate)
     console.print(
-        kv_panel(
+        cost_panel(
             "Scout pre-build estimate",
             [
+                ("Model", fast_info.model),
+                ("Tier", "fast"),
                 ("Files (uncached)", f"{scan.uncached_count} of {scan.uncached_count + scan.cached_count}"),
                 ("Input tokens", f"~{est.input_tokens:,}"),
                 ("Output tokens", f"~{est.output_tokens:,} (projected)"),
-                ("Model", fast_info.model),
                 ("Cost", f"~${est.total:.4f}  (in ${est.input_cost:.4f} + out ${est.output_cost:.4f})"),
             ],
         )
@@ -82,15 +91,16 @@ def print_estimate(provider: str, scan: ScanPlan) -> None:
 
 
 def execute(
-    ctx_store: ContextStore,
+    ctx_store: ScoutCache,
     store: ConfigStore,
     provider: str,
     api_key: str,
     scan: ScanPlan,
     p: Prompter,
 ) -> None:
-    """Run the scout pipeline against ``scan.uncached`` and render the summary."""
-    llm = LLMClient(provider=provider, api_key=api_key, generator_tier="fast", retry_cb=retry_console)
+    """Run the scout pipeline against ``scan.uncached`` and report the outcome."""
+    retry_display = RetryDisplay()
+    llm = LLMClient(provider=provider, api_key=api_key, generator_tier="fast", retry_cb=retry_display)
     targets = list(scan.uncached)
 
     async def handle_exhaustion(current: LLMClient) -> LLMClient | None:
@@ -99,26 +109,40 @@ def execute(
             p,
             current_provider=current.provider,
             current_model=current.generator_model,
-            retry_cb=retry_console,
+            retry_cb=retry_display,
         )
         return result.client if result else None
 
-    with progress_bar(total=len(targets), description="Scouting") as advance:
-        result = asyncio.run(
-            scout_files(
-                targets,
-                ctx_store,
-                llm,
-                progress_cb=lambda path_str: advance(Path(path_str).name),
-                switch_handler=handle_exhaustion,
+    settings = RunSettings.from_config(store.read())
+    with progress_bar(total=len(targets), description="Scouting") as bar:
+        retry_display.bind(bar.set_status)
+        try:
+            result = asyncio.run(
+                run_scout(
+                    targets,
+                    ctx_store,
+                    llm,
+                    progress_cb=lambda path_str: bar(Path(path_str).name),
+                    switch_handler=handle_exhaustion,
+                    batch_token_limit=settings.batch_token_limit,
+                    concurrency_limit=settings.concurrency_limit,
+                    call_timeout=settings.call_timeout,
+                    precomputed_misses=list(scan.misses),
+                )
             )
-        )
+        finally:
+            retry_display.unbind()
 
-    console.print(f"[green]✓[/green] Scout complete: {result.scouted} scouted, {result.skipped} cached")
-    if result.unresolved:
-        console.print(f"[yellow]⚠[/yellow] {len(result.unresolved)} file(s) could not be summarised. Re-run dp init to retry.")
+    report_scout(provider, result)
 
 
-def retry_console(attempt: int, sleep_s: float) -> None:
-    """Render rate-limit countdown without coupling LLMClient to rich."""
-    console.print(f"[yellow]Rate limited — retrying in {sleep_s:.0f}s ({attempt}/{LLM_RETRY.max_attempts - 1})[/yellow]")
+def report_scout(provider: str, result: ScoutResult) -> None:
+    """Render the scout pre-build outcome through the shared summary panel."""
+    usage = TokenUsage(result.input_tokens, result.output_tokens)
+    rows = [
+        ("Model", f"{tier_info(provider, 'fast').model} ({provider})"),
+        ("Files scouted", str(result.scouted)),
+        ("Cached (skipped)", str(result.skipped)),
+        *cost_rows(usage, provider, "fast"),
+    ]
+    render_summary("Scout pre-build complete", rows, unresolved=result.unresolved)

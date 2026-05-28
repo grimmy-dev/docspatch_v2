@@ -39,7 +39,7 @@ def test_config_scope_labels_correct(tmp_path):
 
 def test_config_missing_files_use_defaults(tmp_path):
     cfg = load_config(global_path=tmp_path / "no.toml", repo_path=tmp_path / "no2.toml")
-    assert cfg.batch_token_limit.value == 6000
+    assert cfg.batch_token_limit.value == 10000
     assert cfg.batch_token_limit.scope == "default"
     assert cfg.tone.value == "professional"
 
@@ -113,3 +113,68 @@ def test_project_dir_tree_correct_depth(tmp_path):
     tree = get_dir_tree(tmp_path, max_depth=2)
     assert "shallow.py" in tree
     assert "deep.py" not in tree  # depth 3, excluded
+
+
+def test_retry_policy_delay_grows_exponentially():
+    from docspatch.utils.retry import RetryPolicy
+
+    policy = RetryPolicy(max_attempts=5, base_delay=60.0, max_delay=300.0)
+    assert policy.delay_for(0) == 60.0
+    assert policy.delay_for(1) == 120.0
+    assert policy.delay_for(2) == 240.0
+
+
+def test_retry_policy_delay_capped_at_max_delay():
+    from docspatch.utils.retry import RetryPolicy
+
+    policy = RetryPolicy(max_attempts=5, base_delay=60.0, max_delay=300.0)
+    assert policy.delay_for(3) == 300.0
+    assert policy.delay_for(10) == 300.0
+
+
+def test_llm_retry_defaults_match_policy():
+    from docspatch.llm.client import LLM_RETRY
+
+    assert LLM_RETRY.max_attempts == 5
+    assert LLM_RETRY.base_delay == 60.0
+    assert LLM_RETRY.max_delay == 300.0
+
+
+def test_retry_display_routes_to_bound_sink():
+    from docspatch.ui.retry_display import RetryDisplay
+
+    captured: list[str] = []
+    display = RetryDisplay()
+    display.bind(captured.append)
+    display(2, 120.0)
+    assert captured and "120" in captured[-1] and "2" in captured[-1]
+
+
+def test_retry_display_unbound_falls_back_to_console(capsys):
+    from docspatch.ui.retry_display import RetryDisplay
+
+    display = RetryDisplay()
+    display(1, 60.0)
+    out = capsys.readouterr().out
+    assert "60" in out
+
+
+def test_retry_display_unbind_restores_fallback(capsys):
+    from docspatch.ui.retry_display import RetryDisplay
+
+    captured: list[str] = []
+    display = RetryDisplay()
+    display.bind(captured.append)
+    display.unbind()
+    display(1, 60.0)
+    assert captured == []
+    assert "60" in capsys.readouterr().out
+
+
+def test_progress_bar_exposes_set_status():
+    from docspatch.ui.progress import progress_bar
+
+    with progress_bar(total=2, description="Working") as bar:
+        bar("first")
+        bar.set_status("retry hint")
+        bar("second")
