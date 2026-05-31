@@ -2,7 +2,7 @@
 
 import ast
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import libcst as cst
@@ -189,14 +189,16 @@ def _render_star_arg(prefix: str, arg: ast.arg) -> str:
 
 
 def compress(source: str) -> str:
-    """Replace every function body with ``...``; keep docstrings, module code, comments."""
+    """Token-lean source: keeps code + names, drops docstrings/comments/blanks,
+    one-space indent. Unparseable input returns unchanged.
+    """
     if not source.strip():
         return source
     try:
         module = cst.parse_module(source)
     except cst.ParserSyntaxError:
         return source
-    return module.visit(_BodyStripper()).code
+    return module.visit(Squeezer()).code
 
 
 def estimate_tokens(text: str) -> int:
@@ -204,41 +206,48 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 4
 
 
-class _BodyStripper(cst.CSTTransformer):
-    """Replace every function body with its docstring (if any) plus ``...``."""
-
-    def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
-        """Transform the function body by stripping out original content.
-
-        Args:
-            original_node: The initial function definition node.
-            updated_node: The function definition node being processed.
-
-        Returns:
-            A modified node with a stripped body.
-        """
-        return updated_node.with_changes(body=_stripped_body(updated_node.body))
+ELLIPSIS_LINE = cst.SimpleStatementLine(body=[cst.Expr(value=cst.Ellipsis())])
 
 
-def _stripped_body(body: cst.BaseSuite) -> cst.BaseSuite:
-    """Create an empty suite for a function body while preserving existing docstrings.
+class Squeezer(cst.CSTTransformer):
+    """Squeeze source to a token-lean form, keeping code and identifiers.
 
-    Args:
-        body: The original body suite.
-
-    Returns:
-        A suite containing only the docstring and an ellipsis.
+    Drops docstrings, comments, and blank lines, and sets each block to one
+    space of indentation per level.
     """
-    if not isinstance(body, cst.IndentedBlock):
-        return body
-    kept: list[cst.BaseStatement] = []
-    if body.body and _is_cst_docstring(body.body[0]):
-        kept.append(body.body[0])
-    kept.append(cst.SimpleStatementLine(body=[cst.Expr(value=cst.Ellipsis())]))
-    return body.with_changes(body=kept)
+
+    def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
+        """Strip the module-level docstring."""
+        return updated_node.with_changes(body=strip_docstring(updated_node.body))
+
+    def leave_IndentedBlock(
+        self, original_node: cst.IndentedBlock, updated_node: cst.IndentedBlock
+    ) -> cst.IndentedBlock:
+        """Strip a leading docstring and set one-space indentation."""
+        body: Sequence[cst.BaseStatement] = strip_docstring(updated_node.body) or [ELLIPSIS_LINE]
+        return updated_node.with_changes(body=body, indent=" ")
+
+    def leave_EmptyLine(
+        self, original_node: cst.EmptyLine, updated_node: cst.EmptyLine
+    ) -> cst.RemovalSentinel:
+        """Drop blank lines and standalone comment lines."""
+        return cst.RemoveFromParent()
+
+    def leave_TrailingWhitespace(
+        self, original_node: cst.TrailingWhitespace, updated_node: cst.TrailingWhitespace
+    ) -> cst.TrailingWhitespace:
+        """Drop inline trailing comments."""
+        return updated_node.with_changes(whitespace=cst.SimpleWhitespace(""), comment=None)
 
 
-def _is_cst_docstring(stmt: cst.BaseStatement) -> bool:
+def strip_docstring[S: cst.BaseStatement](body: Sequence[S]) -> Sequence[S]:
+    """Return body without a leading docstring statement, if present."""
+    if body and is_cst_docstring(body[0]):
+        return body[1:]
+    return body
+
+
+def is_cst_docstring(stmt: cst.BaseStatement) -> bool:
     """Determine if a statement is a valid docstring.
 
     Args:
@@ -387,7 +396,7 @@ def _body_with_docstring(body: cst.BaseSuite, docstring: str, body_indent: str) 
         return body
     doc_stmt = _make_docstring_statement(docstring, body_indent)
     statements = list(body.body)
-    if statements and _is_cst_docstring(statements[0]):
+    if statements and is_cst_docstring(statements[0]):
         statements[0] = doc_stmt
     else:
         statements.insert(0, doc_stmt)
@@ -400,7 +409,7 @@ def _module_body_with_docstring(
     """Place ``docstring`` at the top of a module, replacing any existing module docstring."""
     doc_stmt = _make_docstring_statement(docstring, "")
     statements = list(body)
-    if statements and _is_cst_docstring(statements[0]):
+    if statements and is_cst_docstring(statements[0]):
         statements[0] = doc_stmt
     else:
         statements.insert(0, doc_stmt)

@@ -27,6 +27,28 @@ def test_set_get_round_trip(tmp_path):
     assert result.path == "src/foo.py"
 
 
+def test_round_trip_preserves_new_summary_fields(tmp_path):
+    cache = _cache(tmp_path)
+    cache.set(
+        "src/foo.py",
+        FileSummary(
+            path="src/foo.py",
+            summary="does stuff",
+            interfaces=["foo()", "Bar"],
+            relationships=["imports baz"],
+            change_note="added foo()",
+            compressed="def foo(): return 1",
+            content_hash="h1",
+        ),
+    )
+    result = _cache(tmp_path).get("src/foo.py")  # fresh instance -> reads from disk, not memo
+    assert result is not None
+    assert result.interfaces == ["foo()", "Bar"]
+    assert result.relationships == ["imports baz"]
+    assert result.change_note == "added foo()"
+    assert result.compressed == "def foo(): return 1"
+
+
 def test_get_returns_none_for_missing(tmp_path):
     cache = _cache(tmp_path)
     assert cache.get("src/missing.py") is None

@@ -256,7 +256,7 @@ class DocsCache(GzipJSONCache[FileDocState]):
 
 # ---- Scout cache -----------------------------------------------------------
 
-SCOUT_CACHE_SCHEMA_VERSION = 2
+SCOUT_CACHE_SCHEMA_VERSION = 3
 
 
 class ScoutCache(GzipJSONCache[FileSummary]):
@@ -278,6 +278,10 @@ class ScoutCache(GzipJSONCache[FileSummary]):
         return {
             "path": state.path,
             "summary": state.summary,
+            "interfaces": state.interfaces,
+            "relationships": state.relationships,
+            "change_note": state.change_note,
+            "compressed": state.compressed,
             "content_hash": state.content_hash,
             "size": state.size,
             "mtime_ns": state.mtime_ns,
@@ -306,6 +310,10 @@ class ScoutCache(GzipJSONCache[FileSummary]):
         return FileSummary(
             path=payload.get("path", ""),
             summary=payload.get("summary", ""),
+            interfaces=payload.get("interfaces", []),
+            relationships=payload.get("relationships", []),
+            change_note=payload.get("change_note"),
+            compressed=payload.get("compressed", ""),
             content_hash=payload.get("content_hash", ""),
             size=payload.get("size", 0),
             mtime_ns=payload.get("mtime_ns", 0),

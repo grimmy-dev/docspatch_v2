@@ -116,6 +116,12 @@ class FileSummary:
     path: str
     summary: str
     functions: list[FunctionMetadata] = field(default_factory=list)
+    interfaces: list[str] = field(default_factory=list)
+    relationships: list[str] = field(default_factory=list)
+    # Delta narrative vs the prior summary; None on the first summary.
+    change_note: str | None = None
+    # Compressed source kept so a later changed-file re-run can diff old vs new.
+    compressed: str = ""
     content_hash: str = ""
     # size + mtime_ns power constant-time fast-skip before any read/parse.
     size: int = 0
@@ -126,9 +132,21 @@ class FileSummary:
 
 
 class FileSummaryOutput(BaseModel):
-    """Module summary plus one-line description per function."""
+    """Module summary, public surface, relationships, and per-function lines."""
 
     summary: str = Field(description="One decent paragraph overview of the module's purpose and functionality.")
+    interfaces: list[str] = Field(
+        default_factory=list,
+        description="Public functions, classes, and exports a caller uses. One entry each.",
+    )
+    relationships: list[str] = Field(
+        default_factory=list,
+        description="Module connections: what it depends on and what depends on it.",
+    )
+    change_note: str | None = Field(
+        default=None,
+        description="One line on what changed since the prior version. Omit when summarising fresh.",
+    )
     function_summaries: dict[str, str] = Field(
         default_factory=dict,
         description="Keyed by function name. Value = one concrete descriptive on what the function does.",
