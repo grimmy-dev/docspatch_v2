@@ -71,7 +71,9 @@ stand silently.
 - Never write a live file directly. Use `atomic_write` (temp file + atomic
   rename) so an interrupt cannot corrupt the file.
 - Subprocess calls pass an argument **list**, never `shell=True`. All git calls
-  go through `GitReader`.
+  go through `GitReader` (`utils/git.py`): pure-data reads (commit ranges,
+  last-touch, files-touched), repo-root validated, no console or config
+  knowledge.
 - Validate target paths against the repo root; reject traversal outside it.
 
 ## Secrets
