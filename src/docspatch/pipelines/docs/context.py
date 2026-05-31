@@ -88,14 +88,6 @@ class GraphContext:
         self.advance: BarHandle | None = None
 
 
-async def load_state(saver: AsyncSqliteSaver, config: RunnableConfig) -> dict[str, Any]:
-    """Return last-committed state values for ``config`` (empty dict when fresh)."""
-    snap = await saver.aget_tuple(config)
-    if snap is None or snap.checkpoint is None:
-        return {}
-    return dict(snap.checkpoint.get("channel_values", {}))
-
-
 async def load_metadata(saver: AsyncSqliteSaver, config: RunnableConfig) -> dict[str, Any]:
     """Return checkpoint metadata for ``config`` (empty dict when fresh)."""
     snap = await saver.aget_tuple(config)

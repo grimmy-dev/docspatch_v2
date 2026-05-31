@@ -5,43 +5,18 @@ Wired to an ``AsyncSqliteSaver`` so generated docs persist per super-step;
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Sequence
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langgraph.graph import END, START, StateGraph
-from langgraph.types import Send
 
-from docspatch.pipelines.docs.context import GraphContext, SwitchHandler, load_state
+from docspatch.pipelines.docs.context import GraphContext, SwitchHandler
 from docspatch.pipelines.docs.prompts import DocstringItem
 from docspatch.pipelines.docs.state import BatchRef, GeneratedDoc, GenerateState, GenKey, TargetRef
+from docspatch.pipelines.fanout import build_fanout_graph, run_fanout
 from docspatch.ui.progress import BarHandle
 from docspatch.utils.errors import ParseFailed, TransientExhausted
-
-
-def build_generate_graph(ctx: GraphContext, saver: AsyncSqliteSaver):  # noqa: ANN201
-    """START → conditional Send fan-out (skipping done) → worker → END. Checkpointed."""
-    g: StateGraph = StateGraph(GenerateState)
-    g.add_node("generate", make_generate(ctx))
-    g.add_conditional_edges(START, make_router(), ["generate", END])
-    g.add_edge("generate", END)
-    return g.compile(checkpointer=saver)
-
-
-def make_router() -> Callable[[GenerateState], list[Send] | str]:
-    """Fan out to batches whose id is not in ``completed_batches``."""
-
-    def route(state: GenerateState) -> list[Send] | str:
-        completed = set(state.get("completed_batches", []))
-        feedback = state.get("feedback", {})
-        sends = [
-            Send("generate", {"batch": batch, "feedback": feedback})
-            for batch in state.get("batches", [])
-            if batch.id not in completed
-        ]
-        return sends or END
-
-    return route
 
 
 async def generate_for_batch(
@@ -132,23 +107,16 @@ async def run_generation(
     """Run batches; on transient exhaustion swap generator and re-issue the unfinished set.
 
     Ctrl-C surfaces as ``asyncio.CancelledError`` inside the running node, where
-    ``generate_for_batch`` catches it — the batch stays unmarked and the loop
-    below treats it like any other unfinished batch.
+    ``generate_for_batch`` catches it — the batch stays unmarked and ``run_fanout``
+    treats it like any other unfinished batch.
     """
-    wave = 0
-    graph = build_generate_graph(ctx, saver)
-    initial: GenerateState = {"batches": pending}
-    if initial_feedback:
-        initial["feedback"] = initial_feedback
-    while True:
-        await graph.ainvoke(initial, config=config)
-        current = await load_state(saver, config)
-        done_batch_ids = set(current.get("completed_batches", []))
-        next_pending = [b for b in pending if b.id not in done_batch_ids]
-        if not next_pending:
-            return
-        if switch_handler is None:
-            raise TransientExhausted.after(0, RuntimeError("docs exhausted, no switch handler"))
+    def payload_fn(state: dict[str, Any], b: BatchRef) -> dict[str, Any]:
+        return {"batch": b, "feedback": state.get("feedback", {})}
+
+    graph = build_fanout_graph(GenerateState, "generate", make_generate(ctx), payload_fn, saver)
+
+    async def switch() -> bool:
+        assert switch_handler is not None  # only wired in when a handler exists
         if bar is not None:
             bar.pause()
         try:
@@ -157,14 +125,30 @@ async def run_generation(
             if bar is not None:
                 bar.resume()
         if new_gen is None:
-            return
+            return False
         ctx.generator = new_gen
-        pending = next_pending
-        wave += 1
-        initial = {"batches": pending}
-        if bar is not None:
-            done_keys: set[GenKey] = {(d.rel, d.qualname) for d in current.get("generated", [])}
-            remaining_fns = sum(
-                1 for b in pending for ref in b.targets if (ref.rel, ref.qualname) not in done_keys
-            )
-            bar.set_status(f"Rerunning remaining · wave {wave} · {remaining_fns} fn(s)")
+        return True
+
+    def on_wave(wave: int, current: dict[str, Any], remaining: Sequence[BatchRef]) -> None:
+        if bar is None:
+            return
+        done_keys: set[GenKey] = {(d.rel, d.qualname) for d in current.get("generated", [])}
+        remaining_fns = sum(
+            1 for b in remaining for ref in b.targets if (ref.rel, ref.qualname) not in done_keys
+        )
+        bar.set_status(f"Rerunning remaining · wave {wave} · {remaining_fns} fn(s)")
+
+    initial: GenerateState = {"batches": pending}
+    if initial_feedback:
+        initial["feedback"] = initial_feedback
+
+    await run_fanout(
+        graph,
+        saver,
+        config,
+        initial=dict(initial),
+        pending=pending,
+        switch=switch if switch_handler is not None else None,
+        label="docs",
+        on_wave=on_wave if bar is not None else None,
+    )

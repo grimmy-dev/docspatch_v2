@@ -13,7 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
 
 from docspatch.pipelines.docs.commit import commit_docstrings
-from docspatch.pipelines.docs.context import GraphContext, ReviewHandler, load_state
+from docspatch.pipelines.docs.context import GraphContext, ReviewHandler
 from docspatch.pipelines.docs.generate_graph import generate_for_batch
 from docspatch.pipelines.docs.plan_graph import batch_targets
 from docspatch.pipelines.docs.state import (
@@ -24,6 +24,7 @@ from docspatch.pipelines.docs.state import (
     ReviewState,
     TargetRef,
 )
+from docspatch.pipelines.fanout import load_state
 from docspatch.source import MODULE_QUALNAME
 
 

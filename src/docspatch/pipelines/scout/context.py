@@ -1,4 +1,4 @@
-"""Per-run context for scout graph nodes, plus the checkpoint state helper.
+"""Per-run context for scout graph nodes.
 
 ``ScoutContext`` holds what nodes need but must not enter graph state: the live
 client, the file bodies, the concurrency gate, the progress callback.
@@ -6,9 +6,6 @@ client, the file bodies, the concurrency gate, the progress callback.
 
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-
-from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from docspatch.cache import ScoutCache
 from docspatch.llm import LLMClient
@@ -48,11 +45,3 @@ class ScoutContext:
         self.gate = gate
         self.progress_cb = progress_cb
         self.call_timeout = call_timeout
-
-
-async def load_state(saver: AsyncSqliteSaver, config: RunnableConfig) -> dict:
-    """Return last-committed state values for ``config``; empty dict when fresh."""
-    snap = await saver.aget_tuple(config)
-    if snap is None or snap.checkpoint is None:
-        return {}
-    return dict(snap.checkpoint.get("channel_values", {}))
