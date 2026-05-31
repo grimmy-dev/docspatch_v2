@@ -10,13 +10,12 @@ import time
 from pathlib import Path
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from docspatch.cache import DocsCache
 from docspatch.checkpoints import make_run_id
 from docspatch.checkpoints.ledger import TokenLedger
 from docspatch.checkpoints.manifest import RunManifest, now_iso, write_manifest
-from docspatch.checkpoints.serde import make_serde
+from docspatch.checkpoints.saver import docs_db_path, open_checkpoint_saver
 from docspatch.llm import TokenUsage, tier_info
 from docspatch.llm.pricing import actual_cost
 from docspatch.pipelines.docs.context import (
@@ -99,9 +98,9 @@ async def run_docs(
     flags = flags or RunFlags()
     rid = run_id or make_run_id()
     started = time.monotonic()
-    checkpoint_dir = repo_root / ".docspatch" / "checkpoints"
+    db_path = docs_db_path(repo_root)
+    checkpoint_dir = db_path.parent
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    db_path = checkpoint_dir / "docs.sqlite"
     ledger = TokenLedger(checkpoint_dir, rid)
 
     manifest = RunManifest(
@@ -148,8 +147,7 @@ async def run_docs(
         write_manifest(repo_root, manifest)
 
     try:
-        async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-            saver.serde = make_serde()
+        async with open_checkpoint_saver(db_path) as saver:
             config: RunnableConfig = {"configurable": {"thread_id": rid}}
             existing = await load_state(saver, config)
             is_resume = bool(existing.get("generated") or existing.get("completed_batches"))

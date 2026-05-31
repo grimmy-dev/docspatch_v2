@@ -10,7 +10,7 @@ from pathlib import Path
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from docspatch.checkpoints.serde import make_serde
+from docspatch.checkpoints.saver import docs_db_path, open_checkpoint_saver
 from docspatch.utils.errors import ConfigError
 
 
@@ -20,11 +20,10 @@ async def list_incomplete_runs(repo_root: Path) -> list[str]:
     Review and scout threads share the database but are not resumable here, so
     they are skipped. Run ids are timestamp-prefixed, so a reverse sort is age.
     """
-    db_path = repo_root / ".docspatch" / "checkpoints" / "docs.sqlite"
+    db_path = docs_db_path(repo_root)
     if not db_path.exists():
         return []
-    async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-        saver.serde = make_serde()
+    async with open_checkpoint_saver(db_path) as saver:
         return await _collect_resumable(saver)
 
 
@@ -51,10 +50,9 @@ def pick_last_run(run_ids: list[str]) -> str:
 
 async def discard_incomplete_runs(repo_root: Path) -> None:
     """Drop every resumable docs thread so it stops being offered."""
-    db_path = repo_root / ".docspatch" / "checkpoints" / "docs.sqlite"
+    db_path = docs_db_path(repo_root)
     if not db_path.exists():
         return
-    async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-        saver.serde = make_serde()
+    async with open_checkpoint_saver(db_path) as saver:
         for thread_id in await _collect_resumable(saver):
             await saver.adelete_thread(thread_id)

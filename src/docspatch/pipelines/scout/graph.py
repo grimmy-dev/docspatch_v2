@@ -8,11 +8,10 @@ batches on the client returned by ``switch_handler`` after transient exhaustion.
 import asyncio
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from docspatch.cache import ScoutCache
 from docspatch.checkpoints import make_run_id
-from docspatch.checkpoints.serde import make_serde
+from docspatch.checkpoints.saver import docs_db_path, open_checkpoint_saver
 from docspatch.constants import DEFAULT_BATCH_TOKEN_LIMIT, DEFAULT_CALL_TIMEOUT, DEFAULT_CONCURRENCY_LIMIT
 from docspatch.llm import LLMClient
 from docspatch.pipelines.fanout import build_fanout_graph, run_fanout
@@ -92,8 +91,6 @@ async def run_scout(
     )
 
     rid = run_id or make_run_id()
-    db_path = ctx_store.root / ".docspatch" / "checkpoints" / "docs.sqlite"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
     config: RunnableConfig = {"configurable": {"thread_id": f"scout-{rid}"}}
 
     async def switch() -> bool:
@@ -104,8 +101,7 @@ async def run_scout(
         ctx.client = new_client
         return True
 
-    async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-        saver.serde = make_serde()
+    async with open_checkpoint_saver(docs_db_path(ctx_store.root)) as saver:
         graph = build_fanout_graph(ScoutState, "summarize", make_summarize(ctx), lambda _s, b: {"batch": b}, saver)
         final = await run_fanout(
             graph,

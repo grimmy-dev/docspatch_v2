@@ -13,7 +13,7 @@ from typing import Annotated, Any, TypedDict
 import pytest
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from docspatch.checkpoints.serde import make_serde
+from docspatch.checkpoints.saver import make_serde
 from docspatch.pipelines.fanout import build_fanout_graph, run_fanout
 from docspatch.pipelines.scout.state import ScoutBatch
 from docspatch.utils.errors import TransientExhausted
