@@ -10,6 +10,7 @@ from pathlib import Path
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+from docspatch.checkpoints.serde import make_serde
 from docspatch.utils.errors import ConfigError
 
 
@@ -23,6 +24,7 @@ async def list_incomplete_runs(repo_root: Path) -> list[str]:
     if not db_path.exists():
         return []
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
+        saver.serde = make_serde()
         return await _collect_resumable(saver)
 
 
@@ -53,5 +55,6 @@ async def discard_incomplete_runs(repo_root: Path) -> None:
     if not db_path.exists():
         return
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
+        saver.serde = make_serde()
         for thread_id in await _collect_resumable(saver):
             await saver.adelete_thread(thread_id)

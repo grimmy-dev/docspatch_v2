@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from docspatch.cache import ScoutCache, cache_key
-from docspatch.pipelines.scout.planner import build_structured_context
+from docspatch.pipelines.scout.planner import build_structured_context, partition_paths
 from docspatch.schemas import FileSummary, FunctionMetadata
 from docspatch.utils.ignore import ensure_docspatch_ignored
 
@@ -47,6 +47,29 @@ def test_round_trip_preserves_new_summary_fields(tmp_path):
     assert result.relationships == ["imports baz"]
     assert result.change_note == "added foo()"
     assert result.compressed == "def foo(): return 1"
+
+
+def test_partition_marks_changed_file_with_prior(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("def a():\n    return 1\n")
+    cache = _cache(tmp_path)
+    cache.set(
+        "src/a.py",
+        FileSummary(path="src/a.py", summary="old", content_hash="OLD", compressed="def a(): return 0"),
+    )
+    _, misses = partition_paths(["src/a.py"], cache)
+    assert len(misses) == 1
+    assert misses[0].prior is not None
+    assert misses[0].prior.summary == "old"
+    assert misses[0].prior.compressed == "def a(): return 0"
+
+
+def test_partition_new_file_has_no_prior(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "b.py").write_text("def b():\n    return 2\n")
+    _, misses = partition_paths(["src/b.py"], _cache(tmp_path))
+    assert len(misses) == 1
+    assert misses[0].prior is None
 
 
 def test_get_returns_none_for_missing(tmp_path):

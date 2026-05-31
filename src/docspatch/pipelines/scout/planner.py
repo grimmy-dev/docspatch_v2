@@ -45,7 +45,7 @@ def partition_paths(paths: Iterable[str], ctx_store: ScoutCache) -> tuple[list[s
             source = raw.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        misses.append(FileMiss(path, source, compress(source), content_hash))
+        misses.append(FileMiss(path, source, compress(source), content_hash, prior=cached))
     return hits, misses
 
 

@@ -10,14 +10,21 @@ from typing import Annotated, NamedTuple, TypedDict
 
 from pydantic import BaseModel, ConfigDict
 
+from docspatch.schemas import FileSummary
+
 
 class FileMiss(NamedTuple):
-    """A file with no fresh cached summary. Source read and compressed upfront."""
+    """A file with no fresh cached summary. Source read and compressed upfront.
+
+    ``prior`` holds the previous summary when the file changed (used to write a
+    change_note); it is None for a first-time summary.
+    """
 
     path: str
     source: str
     compressed: str
     content_hash: str
+    prior: FileSummary | None = None
 
 
 @dataclass(frozen=True)

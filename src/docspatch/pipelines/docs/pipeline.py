@@ -16,6 +16,7 @@ from docspatch.cache import DocsCache
 from docspatch.checkpoints import make_run_id
 from docspatch.checkpoints.ledger import TokenLedger
 from docspatch.checkpoints.manifest import RunManifest, now_iso, write_manifest
+from docspatch.checkpoints.serde import make_serde
 from docspatch.llm import TokenUsage, tier_info
 from docspatch.llm.pricing import actual_cost
 from docspatch.pipelines.docs.context import (
@@ -148,6 +149,7 @@ async def run_docs(
 
     try:
         async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
+            saver.serde = make_serde()
             config: RunnableConfig = {"configurable": {"thread_id": rid}}
             existing = await load_state(saver, config)
             is_resume = bool(existing.get("generated") or existing.get("completed_batches"))

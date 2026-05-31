@@ -28,6 +28,21 @@ def available() -> list[str]:
     return list(LICENSE_IDS)
 
 
+def insert_copyright(body: str, name: str, year: int) -> str:
+    """Add a ``Copyright (c) <year> <name>`` line after the license title.
+
+    No-op when the body already carries a ``Copyright (c)`` line (MIT/BSD texts
+    ship without one; Apache/GPL embed their own).
+    """
+    if "Copyright (c)" in body:
+        return body
+    lines = body.splitlines()
+    if not lines:
+        return body
+    lines.insert(1, f"\nCopyright (c) {year} {name}")
+    return "\n".join(lines) + "\n"
+
+
 def text(name: str) -> str | None:
     """Return the LICENSE file body for ``name``.
 

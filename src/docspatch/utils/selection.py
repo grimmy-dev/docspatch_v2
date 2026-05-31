@@ -10,6 +10,7 @@ selectors must never be called from inside an already-running loop.
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from docspatch.constants import TONES
@@ -19,7 +20,9 @@ from docspatch.ui import Prompter, console, status
 from docspatch.utils.config import ConfigStore
 from docspatch.utils.errors import ConfigError
 from docspatch.utils.fs import atomic_write
+from docspatch.utils.git import GitReader
 from docspatch.utils.licenses import available as available_licenses
+from docspatch.utils.licenses import insert_copyright
 from docspatch.utils.licenses import text as license_text
 from docspatch.utils.project import get_pyproject_field
 from docspatch.utils.secrets import display_value
@@ -154,10 +157,24 @@ def select_license(repo_root: Path, p: Prompter, *, reconfigure: bool = False) -
 
     text = license_text(selected)
     if text and not license_file.exists():
+        name, email = resolve_author(repo_root)
+        if name:
+            text = insert_copyright(text, name, datetime.now().year)
+            console.print(f"[dim]author: {name}{f' · {email}' if email else ''}[/dim]")
+        else:
+            console.print("[dim]Tip: set `git config user.name` to embed your copyright.[/dim]")
         atomic_write(license_file, text)
         console.print(f"[green]✓[/green] LICENSE ({selected}) written")
     if pyproject.exists() and not has_field:
         update_pyproject_license(pyproject, selected)
+        if get_pyproject_field(pyproject, "authors") is None:
+            console.print("[dim]Tip: add an `authors` entry under [project] in pyproject.toml.[/dim]")
+
+
+def resolve_author(repo_root: Path) -> tuple[str | None, str | None]:
+    """Return ``(name, email)`` from git config; either may be None when unset."""
+    git = GitReader(repo_root)
+    return git.config("user.name"), git.config("user.email")
 
 
 def select_or_skip(

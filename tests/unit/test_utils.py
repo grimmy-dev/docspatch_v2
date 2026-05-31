@@ -3,7 +3,19 @@
 import tomllib
 
 from docspatch.utils.config import ConfigStore, load_config
+from docspatch.utils.licenses import insert_copyright
 from docspatch.utils.project import get_dir_tree, get_pyproject_field
+
+
+def test_insert_copyright_adds_line_after_title():
+    out = insert_copyright("MIT License\n\nPermission is hereby...\n", "Ada Lovelace", 2026)
+    assert out.splitlines()[0] == "MIT License"
+    assert "Copyright (c) 2026 Ada Lovelace" in out
+
+
+def test_insert_copyright_skips_when_already_present():
+    body = "MIT License\n\nCopyright (c) 1999 Bob\n\nPermission...\n"
+    assert insert_copyright(body, "Ada", 2026) == body
 
 # ── config ─────────────────────────────────────────────────────────────────
 

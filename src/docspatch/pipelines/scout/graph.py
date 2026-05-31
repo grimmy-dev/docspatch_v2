@@ -15,6 +15,7 @@ from langgraph.types import Send
 
 from docspatch.cache import ScoutCache
 from docspatch.checkpoints import make_run_id
+from docspatch.checkpoints.serde import make_serde
 from docspatch.constants import DEFAULT_BATCH_TOKEN_LIMIT, DEFAULT_CALL_TIMEOUT, DEFAULT_CONCURRENCY_LIMIT
 from docspatch.llm import LLMClient
 from docspatch.pipelines.scout.context import ProgressCb, ScoutContext, SwitchHandler, load_state
@@ -123,6 +124,7 @@ async def run_scout(
     config: RunnableConfig = {"configurable": {"thread_id": f"scout-{rid}"}}
 
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
+        saver.serde = make_serde()
         graph = build_summarize_graph(ctx, saver)
         pending = batches
         while True:

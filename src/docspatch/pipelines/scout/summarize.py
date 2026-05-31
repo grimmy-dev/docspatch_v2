@@ -52,6 +52,11 @@ async def store_summary(cache: ScoutCache, miss: FileMiss, per_file: FileSummary
         path=miss.path,
         summary=per_file.summary,
         functions=merged,
+        interfaces=per_file.interfaces,
+        relationships=per_file.relationships,
+        # A change_note is only meaningful against a prior summary.
+        change_note=per_file.change_note if miss.prior else None,
+        compressed=miss.compressed,
         content_hash=miss.content_hash,
         size=size,
         mtime_ns=mtime_ns,

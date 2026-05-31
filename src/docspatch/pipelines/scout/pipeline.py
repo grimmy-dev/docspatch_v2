@@ -14,6 +14,7 @@ from docspatch.llm.pricing import estimate_cost
 from docspatch.pipelines.scout.graph import run_scout
 from docspatch.pipelines.scout.planner import plan_uncached
 from docspatch.pipelines.scout.state import ScanPlan, ScoutResult
+from docspatch.pipelines.scout.unified import write_unified
 from docspatch.schemas import RunSettings
 from docspatch.ui import Prompter, console, cost_panel, cost_rows, progress_bar, render_summary, status
 from docspatch.ui.retry_display import RetryDisplay
@@ -46,6 +47,7 @@ def pre_build(
 
     if scan.all_current:
         console.print("[dim]Context already up to date — skipping scout.[/dim]")
+        write_unified(ctx_store, paths, repo_root)
         return
 
     print_estimate(provider, scan)
@@ -55,6 +57,7 @@ def pre_build(
         return
 
     execute(ctx_store, store, provider, api_key, scan, p)
+    write_unified(ctx_store, paths, repo_root)
 
 
 def tracked_paths(repo_root: Path) -> list[str]:
