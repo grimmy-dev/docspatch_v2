@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from docspatch.schemas import FileSummary, FunctionMetadata
+from docspatch.schemas import FileSummary, FunctionDocState, FunctionMetadata
 from docspatch.ui.console import console
 from docspatch.utils.errors import CacheError
 from docspatch.utils.fs import atomic_write
@@ -183,15 +183,6 @@ class GzipJSONCache[T](ABC):
 # ---- Docs cache ------------------------------------------------------------
 
 DOCS_CACHE_SCHEMA_VERSION = 1
-
-
-@dataclass
-class FunctionDocState:
-    """Hash + presence flag for a single function."""
-
-    hash: str
-    has_docstring: bool
-    line_start: int = 0
 
 
 @dataclass

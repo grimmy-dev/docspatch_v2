@@ -1,4 +1,7 @@
-"""Shared Rich console instances."""
+"""Shared Rich console instances and the status spinner that uses them."""
+
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from rich.console import Console
 
@@ -7,6 +10,17 @@ err_console = Console(stderr=True, style="bold red")
 
 FALLBACK_WIDTH = 80
 FALLBACK_HEIGHT = 24
+
+
+@contextmanager
+def status(message: str, spinner: str = "dots") -> Iterator[None]:
+    """Show ``message`` with a spinner until the block exits.
+
+    Single source of truth for "working..." indicators on silent operations
+    (validate_key, cache scan, etc.) so the terminal never sits idle.
+    """
+    with console.status(message, spinner=spinner):
+        yield
 
 
 def terminal_size() -> tuple[int, int]:

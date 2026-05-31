@@ -16,7 +16,8 @@ from pathlib import Path
 
 from langgraph.types import interrupt
 
-from docspatch.cache import FileDocState, FunctionDocState
+from docspatch.cache import FileDocState
+from docspatch.schemas import FunctionDocState
 from docspatch.source import (
     MODULE_QUALNAME,
     DocstringInsert,

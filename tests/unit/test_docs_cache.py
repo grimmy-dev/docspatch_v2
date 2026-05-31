@@ -3,10 +3,11 @@
 import gzip
 from pathlib import Path
 
-from docspatch.cache import DocsCache, FileDocState, FunctionDocState
+from docspatch.cache import DocsCache, FileDocState
+from docspatch.schemas import FunctionDocState
 
 
-def make_state(file_hash: str = "deadbeef") -> FileDocState:
+def make_state(file_hash: str = "holder") -> FileDocState:
     return FileDocState(
         path="src/foo.py",
         file_hash=file_hash,

@@ -7,8 +7,7 @@ from dataclasses import dataclass
 
 import libcst as cst
 
-from docspatch.cache import FunctionDocState
-from docspatch.schemas import FunctionMetadata
+from docspatch.schemas import FunctionDocState, FunctionMetadata
 
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 

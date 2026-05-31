@@ -112,6 +112,15 @@ class FunctionMetadata:
 
 
 @dataclass
+class FunctionDocState:
+    """Hash + presence flag for a single function."""
+
+    hash: str
+    has_docstring: bool
+    line_start: int = 0
+
+
+@dataclass
 class FileSummary:
     path: str
     summary: str
