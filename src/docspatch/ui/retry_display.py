@@ -1,4 +1,4 @@
-"""Route retry status messages to the active progress bar or stdout."""
+"""Handle rate limit notifications and user retry feedback."""
 
 from collections.abc import Callable
 
@@ -13,7 +13,11 @@ class RetryDisplay:
         self.sink: Callable[[str], None] | None = None
 
     def bind(self, sink: Callable[[str], None]) -> None:
-        """Send subsequent retry notices to ``sink`` (e.g., progress bar description)."""
+        """Send subsequent retry notices to the specified sink.
+
+        Args:
+            sink: Output handler for notifications.
+        """
         self.sink = sink
 
     def unbind(self) -> None:
@@ -27,10 +31,7 @@ class RetryDisplay:
             attempt: Current retry count.
             remaining: Estimated seconds remaining before the next attempt.
         """
-        msg = (
-            f"⚠ Rate limited — retry {attempt}/{LLM_RETRY.max_attempts} "
-            f"in {remaining:.0f}s · Ctrl+C to choose"
-        )
+        msg = f"⚠ Rate limited — retry {attempt}/{LLM_RETRY.max_attempts} in {remaining:.0f}s · Ctrl+C to choose"
         if self.sink is not None:
             self.sink(msg)
             return

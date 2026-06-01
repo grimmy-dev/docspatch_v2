@@ -19,9 +19,7 @@ def test_store_summary_persists_new_fields(tmp_path):
     cache = _seed(tmp_path)
     prior = FileSummary(path="src/a.py", summary="old", compressed="def a(): return 0")
     miss = FileMiss("src/a.py", "def a():\n    return 1\n", "def a(): return 1", "NEW", prior=prior)
-    out = FileSummaryOutput(
-        summary="new", interfaces=["a()"], relationships=["none"], change_note="changed return"
-    )
+    out = FileSummaryOutput(summary="new", interfaces=["a()"], relationships=["none"], change_note="changed return")
     asyncio.run(store_summary(cache, miss, out))
 
     got = ScoutCache(tmp_path).get("src/a.py")

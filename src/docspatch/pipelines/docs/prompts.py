@@ -1,8 +1,4 @@
-"""Docs pipeline prompts. Single source of truth for wording.
-
-Banned-phrase list keeps generated docstrings free of LLM-ese filler. The same
-list is used post-hoc to trigger silent retries.
-"""
+"""Generate prompt strings for docstring creation tasks using specific formatting guidelines and tone requirements."""
 
 from pydantic import BaseModel, ConfigDict
 
@@ -10,6 +6,8 @@ from docspatch.constants import DEFAULT_TONE, TONES
 
 BANNED_PHRASES: tuple[str, ...] = (
     "This function",
+    "This method",
+    "This class",
     "simply",
     "essentially",
     "in order to",
@@ -17,6 +15,15 @@ BANNED_PHRASES: tuple[str, ...] = (
     "as the name suggests",
     "basically",
     "just",
+    "leverage",
+    "facilitate",
+    "utilize",
+    "responsible for",
+    "is used to",
+    "used to",
+    "allows you to",
+    "a function that",
+    "a method that",
 )
 
 
@@ -35,7 +42,14 @@ class DocstringItem(BaseModel):
 
 
 def render_item(item: DocstringItem) -> str:
-    """Render one function block + its accumulated reviewer feedback."""
+    """Format a specific target as an input entry in the generation prompt.
+
+    Args:
+        item: Target data including source code and optional feedback.
+
+    Returns:
+        Formatted entry string.
+    """
     head = f"--- id: {item.key} ---\nSignature:\n{item.signature}\n\nBody:\n{item.body}"
     if not item.feedback:
         return head
@@ -44,40 +58,48 @@ def render_item(item: DocstringItem) -> str:
 
 
 def contains_banned_phrase(text: str) -> bool:
-    """Return ``True`` if ``text`` contains any banned phrase (case-insensitive)."""
+    """Check text for forbidden phrasing.
+
+    Args:
+        text: String to evaluate.
+
+    Returns:
+        Boolean indicating existence of banned phrases.
+    """
     lowered = text.lower()
     return any(phrase.lower() in lowered for phrase in BANNED_PHRASES)
 
 
-def build_batch_docstring_prompt(
-    items: list[DocstringItem], tone: str, remarks: str | None = None
-) -> str:
-    """Bundle N functions into one structured-output prompt.
+def build_batch_docstring_prompt(items: list[DocstringItem], tone: str, remarks: str | None = None) -> str:
+    """Create a complete prompt text for a batch of documentation targets.
 
     Args:
-        items: Functions to document. ``key`` must match the response dict key.
-        tone: Tone key from config. Falls back to default tone guidance.
-        remarks: Optional run-wide instruction applied to every docstring.
+        items: List of items requiring docstrings.
+        tone: Requested stylistic tone.
+        remarks: Additional instructions to apply to all targets.
+
+    Returns:
+        The constructed prompt.
     """
     tone_line = TONES.get(tone, TONES[DEFAULT_TONE])
     banned = ", ".join(repr(p) for p in BANNED_PHRASES)
     sections = "\n\n".join(render_item(item) for item in items)
     ids = "\n".join(f"- {item.key}" for item in items)
-    remarks_line = f"- Extra instruction (applies to every docstring): {remarks}\n" if remarks else ""
+    remarks_line = f"- Extra instruction (applies to every entry): {remarks}\n" if remarks else ""
     return (
-        "Write a Google-style docstring for EACH function below.\n"
-        "Return a JSON object whose `docstrings` field maps each `id` exactly to its docstring body.\n"
-        "Rules:\n"
+        "Write a Google-style docstring for EACH entry below by filling the structured fields and be non LLM-ese.\n"
+        "Map each `id` exactly to its docstring spec in the `docstrings` field.\n"
+        "How to fill each spec:\n"
         f"- Tone: {tone_line}\n"
         f"{remarks_line}"
-        "- Start each with a one-line summary in the imperative mood, ending with a period.\n"
-        "- After the summary, leave a blank line before any section.\n"
-        "- Section headers (Args:, Returns:, Raises:, Notes:) on their own line.\n"
-        "- Each parameter under Args: on its own line, indented 4 spaces: `name: description.`\n"
-        "- Include Args / Returns / Raises sections only when they add information.\n"
-        "- Use real newline characters between lines — never collapse to one line.\n"
-        f"- Banned phrases (do not use): {banned}.\n"
-        "- No triple quotes in the output. No filler. No restating the function name.\n\n"
+        "- description: one line, imperative mood, ending with a period. Say what it does — "
+        "plain, concrete verbs, no meta-commentary about the code being a function.\n"
+        "- args: one entry per parameter worth explaining; skip self/cls and self-evident ones.\n"
+        "- returns: what it returns; leave null for functions that return None.\n"
+        "- raises: only exceptions a caller should anticipate; leave empty when none.\n"
+        '- A module entry (id ending in "::<module>"): set description to a 1–3 sentence '
+        "summary of the module's role and leave args, returns, and raises empty.\n"
+        f"- Banned phrases (never use): {banned}.\n\n"
         f"Expected ids (use each verbatim as a key in `docstrings`):\n{ids}\n\n"
-        f"Functions:\n{sections}\n"
+        f"Entries:\n{sections}\n"
     )

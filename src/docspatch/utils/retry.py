@@ -1,4 +1,4 @@
-"""Coordinated backoff across concurrent calls. One shared timer per gate."""
+"""Implement request retries, backoff policies, and rate limit gating."""
 
 import asyncio
 import time
@@ -20,7 +20,14 @@ class RetryPolicy:
     max_delay: float = float("inf")
 
     def delay_for(self, attempt: int) -> float:
-        """Calculate the backoff delay for a specific attempt."""
+        """Calculate the backoff delay for a specific attempt.
+
+        Args:
+            attempt: The current attempt index.
+
+        Returns:
+            The calculated delay in seconds.
+        """
         return min(self.base_delay * (2**attempt), self.max_delay)
 
 
@@ -33,7 +40,12 @@ class RateLimitGate:
     """
 
     def __init__(self, policy: RetryPolicy, on_retry: OnRetry | None = None) -> None:
-        """Initialize the rate limit gate with a policy."""
+        """Initialize the rate limit gate with a policy.
+
+        Args:
+            policy: Retry logic configuration.
+            on_retry: Optional callback to invoke during retry delays.
+        """
         self.policy = policy
         self.on_retry = on_retry
         self.lock = asyncio.Lock()
@@ -41,7 +53,18 @@ class RateLimitGate:
         self.unblock_at = 0.0
 
     async def execute[T](self, fn: Callable[[], Awaitable[T]], is_retriable: IsRetriable) -> T:
-        """Run ``fn`` under the gate. Coordinates retries across siblings."""
+        """Run fn under the gate and coordinate retries across siblings.
+
+        Args:
+            fn: The asynchronous action to perform.
+            is_retriable: Predicate to determine if an exception warrants a retry.
+
+        Returns:
+            The function result.
+
+        Raises:
+            TransientExhausted: The retry budget is exceeded.
+        """
         last_exc: Exception | None = None
         while True:
             await self.wait_if_blocked()
@@ -67,7 +90,7 @@ class RateLimitGate:
                         self.unblock_at = time.monotonic() + self.policy.delay_for(self.attempt - 1)
 
     async def wait_if_blocked(self) -> None:
-        """Block until ``unblock_at`` passes. Ticks ``on_retry`` once per second."""
+        """Block until unblock_at passes, ticking on_retry once per second."""
         while True:
             remaining = self.unblock_at - time.monotonic()
             if remaining <= 0:

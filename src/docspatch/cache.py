@@ -1,10 +1,4 @@
-"""Unified cache layer. Gzip-JSON file cache with hash-based invalidation.
-
-One generic base (:class:`GzipJSONCache`) handles paths, atomic writes,
-memoization, schema-version eviction, and key derivation. The two pipeline
-caches (:class:`DocsCache`, :class:`ScoutCache`) only supply their schema
-version, subdir, and state ↔ JSON mapping.
-"""
+"""Disk-backed Gzip-JSON cache for storing file states and scout summaries."""
 
 import gzip
 import hashlib
@@ -39,7 +33,15 @@ KEY_HEX_WIDTH = 32
 
 
 def cache_key(rel_path: str, suffix: str = ".json.gz") -> str:
-    """Deterministic filename for ``rel_path``. Stable across repo moves."""
+    """Compute a deterministic filename for a path. Stable across repository moves.
+
+    Args:
+        rel_path: Relative file path to key.
+        suffix: File extension for the cached entry.
+
+    Returns:
+        The 32-character SHA-256 hash.
+    """
     digest = hashlib.sha256(rel_path.encode()).hexdigest()[:KEY_HEX_WIDTH]
     return f"{digest}{suffix}"
 
@@ -50,12 +52,28 @@ _HEADER_BYTES = 4
 
 
 def _pack(payload: dict[str, Any], schema: int) -> bytes:
-    """Schema header (4-byte BE) + gzip-JSON payload."""
+    """Prefix a JSON payload with a schema version header and compress it.
+
+    Args:
+        payload: Dictionary to serialize.
+        schema: Integer schema version.
+
+    Returns:
+        Packed bytes.
+    """
     return schema.to_bytes(_HEADER_BYTES, "big") + gzip.compress(json.dumps(payload).encode())
 
 
 def _unpack(raw: bytes, expected_schema: int) -> tuple[dict[str, Any] | None, int]:
-    """Inflate ``raw``. Returns ``(payload, version)``; payload ``None`` on mismatch."""
+    """Inflate binary cache data and validate the schema version.
+
+    Args:
+        raw: Binary data read from disk.
+        expected_schema: Version required for parsing.
+
+    Returns:
+        A tuple of the payload dict and the schema version.
+    """
     if len(raw) < _HEADER_BYTES:
         return None, 0
     version = int.from_bytes(raw[:_HEADER_BYTES], "big")
@@ -96,7 +114,17 @@ class GzipJSONCache[T](ABC):
         self._schema_warned = False
 
     def get(self, path: str) -> T | None:
-        """Return cached state for ``path``, or ``None`` if absent or stale."""
+        """Fetch and decode cached state for a given path.
+
+        Args:
+            path: Relative path to retrieve.
+
+        Returns:
+            Deserialized object or None if missing, corrupted, or stale.
+
+        Raises:
+            CacheError: Reading the file fails.
+        """
         if path in self._memo:
             return self._memo[path]
         entry = self.cache_dir / cache_key(path)
@@ -124,7 +152,15 @@ class GzipJSONCache[T](ABC):
         return state
 
     def set(self, path: str, state: T) -> None:
-        """Persist ``state`` for ``path``. Replaces any existing entry."""
+        """Atomically write the state to disk for a given path.
+
+        Args:
+            path: Relative path to store.
+            state: Object to persist.
+
+        Raises:
+            CacheError: Writing the file fails.
+        """
         entry = self.cache_dir / cache_key(path)
         try:
             atomic_write(entry, _pack(self.to_dict(state), self.SCHEMA_VERSION))
@@ -133,13 +169,21 @@ class GzipJSONCache[T](ABC):
         self._memo[path] = state
 
     def delete(self, path: str) -> None:
-        """Drop the cached entry for ``path``. No-op when no entry exists."""
+        """Remove the cached entry for a path.
+
+        Args:
+            path: Relative path to remove.
+        """
         entry = self.cache_dir / cache_key(path)
         entry.unlink(missing_ok=True)
         self._memo[path] = None
 
     def info(self) -> CacheInfo:
-        """Return file count, total size, and last-build timestamp."""
+        """Retrieve file count, total size, and the last-modified timestamp.
+
+        Returns:
+            Cache statistics object.
+        """
         empty = CacheInfo(file_count=0, total_size_bytes=0, last_build=None)
         try:
             with os.scandir(self.cache_dir) as it:
@@ -155,7 +199,12 @@ class GzipJSONCache[T](ABC):
         )
 
     def evict_stale(self, entry: Path, version: int) -> None:
-        """Delete a stale entry. Warn once per instance."""
+        """Remove an entry due to a schema mismatch.
+
+        Args:
+            entry: Path to the stale file.
+            version: The detected stale version.
+        """
         entry.unlink(missing_ok=True)
         if not self._schema_warned:
             console.print(
@@ -165,19 +214,36 @@ class GzipJSONCache[T](ABC):
             self._schema_warned = True
 
     def evict_corrupt(self, entry: Path, exc: Exception) -> None:
-        """Delete a corrupt entry and warn. The pipeline rebuilds it on the next run."""
+        """Remove an entry that failed deserialization.
+
+        Args:
+            entry: Path to the broken file.
+            exc: The exception triggering eviction.
+        """
         entry.unlink(missing_ok=True)
-        console.print(
-            f"[yellow]{self.LABEL}: corrupt entry evicted ({exc}). It will be re-built.[/yellow]"
-        )
+        console.print(f"[yellow]{self.LABEL}: corrupt entry evicted ({exc}). It will be re-built.[/yellow]")
 
     @abstractmethod
     def to_dict(self, state: T) -> dict[str, Any]:
-        """Serialise ``state`` to a JSON-safe payload (no schema key)."""
+        """Serialize state to a JSON-compatible dictionary.
+
+        Args:
+            state: Object to serialize.
+
+        Returns:
+            Serialized payload dictionary.
+        """
 
     @abstractmethod
     def from_dict(self, payload: dict[str, Any]) -> T:
-        """Materialise the cache state from a JSON payload."""
+        """Create an object instance from a dictionary.
+
+        Args:
+            payload: Deserialized JSON data.
+
+        Returns:
+            Reconstructed state object.
+        """
 
 
 # ---- Docs cache ------------------------------------------------------------
@@ -205,10 +271,10 @@ class DocsCache(GzipJSONCache[FileDocState]):
     LABEL = "Docs cache"
 
     def to_dict(self, state: FileDocState) -> dict[str, Any]:
-        """Serialize the provided file documentation state to a dictionary.
+        """Convert file documentation state to a dictionary.
 
         Args:
-            state: The current documentation state for a file.
+            state: The documentation state object.
 
         Returns:
             A dictionary representation of the state.
@@ -216,13 +282,13 @@ class DocsCache(GzipJSONCache[FileDocState]):
         return asdict(state)
 
     def from_dict(self, payload: dict[str, Any]) -> FileDocState:
-        """Reconstruct a FileDocState object from a serialized dictionary.
+        """Create a FileDocState from raw dictionary data.
 
         Args:
-            payload: The dictionary containing serialized documentation state data.
+            payload: The dictionary containing state fields.
 
         Returns:
-            The restored FileDocState instance.
+            A FileDocState instance.
         """
         return FileDocState(
             path=payload.get("path", ""),
@@ -233,7 +299,15 @@ class DocsCache(GzipJSONCache[FileDocState]):
         )
 
     def needs_rerun(self, path: str, current: dict[str, FunctionDocState]) -> list[str]:
-        """Return qualnames in ``current`` that should be (re)generated."""
+        """Identify functions requiring documentation updates.
+
+        Args:
+            path: File path to check.
+            current: Current function states from the file.
+
+        Returns:
+            A list of function qualified names.
+        """
         cached = self.get(path)
         if cached is None:
             return list(current)
@@ -258,13 +332,13 @@ class ScoutCache(GzipJSONCache[FileSummary]):
     LABEL = "Scout cache"
 
     def to_dict(self, state: FileSummary) -> dict[str, Any]:
-        """Serialize scout file summary metadata into a dictionary.
+        """Convert file summary metadata into a dictionary.
 
         Args:
-            state: The file summary metadata to serialize.
+            state: The summary state object.
 
         Returns:
-            A dictionary containing the flattened summary fields.
+            A dictionary representation of the summary.
         """
         return {
             "path": state.path,
@@ -290,13 +364,13 @@ class ScoutCache(GzipJSONCache[FileSummary]):
         }
 
     def from_dict(self, payload: dict[str, Any]) -> FileSummary:
-        """Reconstruct a FileSummary object from a serialized dictionary.
+        """Create a FileSummary object from raw dictionary data.
 
         Args:
-            payload: The dictionary containing scout summary data.
+            payload: The dictionary containing summary fields.
 
         Returns:
-            The restored FileSummary instance.
+            A FileSummary instance.
         """
         return FileSummary(
             path=payload.get("path", ""),

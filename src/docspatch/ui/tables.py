@@ -1,10 +1,4 @@
-"""Reusable rich Table builder.
-
-Avoids the common layout failures:
-- `expand=False` so the table never stretches to break narrow terminals.
-- `overflow="fold"` per column so long cells wrap inside instead of clipping.
-- Consistent box style and bold header across every command.
-"""
+"""Provide utilities for generating standard UI tables."""
 
 from collections.abc import Iterable
 
@@ -17,7 +11,15 @@ def build_table(
     rows: Iterable[Iterable[str]],
     title: str | None = None,
 ) -> Table:
-    """Construct a rich Table with project-standard styling."""
+    """Assemble a table with standardized project styling.
+
+    Args:
+        headers: Table column labels.
+        rows: Table row data.
+
+    Returns:
+        Table object.
+    """
     table = Table(
         title=title,
         box=box.ROUNDED,

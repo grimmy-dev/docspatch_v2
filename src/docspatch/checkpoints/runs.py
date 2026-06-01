@@ -1,8 +1,4 @@
-"""Discover incomplete docs runs for ``--resume``.
-
-A completed run deletes its own checkpoint thread, so whatever threads remain
-in ``docs.sqlite`` belong to interrupted runs that can be resumed.
-"""
+"""Utilities for listing and managing incomplete runs."""
 
 from __future__ import annotations
 
@@ -15,10 +11,13 @@ from docspatch.utils.errors import ConfigError
 
 
 async def list_incomplete_runs(repo_root: Path) -> list[str]:
-    """Resumable docs run ids in ``docs.sqlite``, newest first.
+    """Retrieve identifiers of unfinished documentation runs.
 
-    Review and scout threads share the database but are not resumable here, so
-    they are skipped. Run ids are timestamp-prefixed, so a reverse sort is age.
+    Args:
+        repo_root: Repository base directory.
+
+    Returns:
+        Sorted list of run identifiers.
     """
     db_path = docs_db_path(repo_root)
     if not db_path.exists():
@@ -28,7 +27,14 @@ async def list_incomplete_runs(repo_root: Path) -> list[str]:
 
 
 async def _collect_resumable(saver: AsyncSqliteSaver) -> list[str]:
-    """Docs run ids on an already-open saver, newest first."""
+    """Extract resumable run identifiers from a saver instance.
+
+    Args:
+        saver: The checkpoint saver.
+
+    Returns:
+        List of run identifiers.
+    """
     seen: set[str] = set()
     async for tup in saver.alist(None):
         thread_id = tup.config["configurable"]["thread_id"]
@@ -38,10 +44,16 @@ async def _collect_resumable(saver: AsyncSqliteSaver) -> list[str]:
 
 
 def pick_last_run(run_ids: list[str]) -> str:
-    """Return the most recent incomplete run id.
+    """Select the most recent incomplete run.
+
+    Args:
+        run_ids: List of available run identifiers.
+
+    Returns:
+        The chosen run identifier.
 
     Raises:
-        ConfigError: When there is no incomplete run to resume.
+        ConfigError: run_ids is empty.
     """
     if not run_ids:
         raise ConfigError.no_runs_to_resume()
@@ -49,7 +61,11 @@ def pick_last_run(run_ids: list[str]) -> str:
 
 
 async def discard_incomplete_runs(repo_root: Path) -> None:
-    """Drop every resumable docs thread so it stops being offered."""
+    """Delete all pending documentation run state.
+
+    Args:
+        repo_root: Repository base directory.
+    """
     db_path = docs_db_path(repo_root)
     if not db_path.exists():
         return

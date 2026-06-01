@@ -1,9 +1,5 @@
-"""Scout summarise graph: Send fan-out over token-sized batches, checkpointed.
-
-Shares the docs pipeline's ``AsyncSqliteSaver`` (``.docspatch/checkpoints/docs.sqlite``)
-under a ``scout-<run_id>`` thread namespace. ``run_scout`` re-issues unfinished
-batches on the client returned by ``switch_handler`` after transient exhaustion.
-"""
+"""Construct the scouting graph for analyzing and summarizing codebase files.
+This module handles batching, graph execution, and resource recovery."""
 
 import asyncio
 
@@ -24,7 +20,14 @@ from docspatch.utils.batcher import greedy_batches
 
 
 def make_summarize(ctx: ScoutContext):  # noqa: ANN201 — returns a langgraph node callable
-    """Wrap ``summarize_batch`` as a node. ``None`` leaves the batch unmarked."""
+    """Generate the graph node function for summarizing batches.
+
+    Args:
+        ctx: Scouting operational context.
+
+    Returns:
+        Node callable.
+    """
 
     async def summarize(payload: dict) -> ScoutState:
         batch: ScoutBatch = payload["batch"]
@@ -48,22 +51,15 @@ async def run_scout(
     run_id: str | None = None,
     precomputed_misses: list[FileMiss] | None = None,
 ) -> ScoutResult:
-    """Summarise ``paths`` through the checkpointed scout graph, skipping cache hits.
-
-    Misses are token-batched and fanned out as one LLM call each. On transient
-    exhaustion the unfinished batches re-run on the client from ``switch_handler``;
-    returning ``None`` aborts and keeps partial results.
+    """Execute the scouting pipeline to summarize file contents.
 
     Args:
-        paths: File paths to scout.
-        ctx_store: Cache backend; hits are skipped.
-        llm_client: Provider-normalised structured-output client.
-        progress_cb: Optional per-file callback fired once a file lands in cache.
-        batch_token_limit: Max compressed-source tokens per LLM call.
-        concurrency_limit: Max parallel LLM batch calls.
-        call_timeout: Seconds before a hung LLM call is cancelled and the batch re-issued.
-        switch_handler: Optional callback invoked on transient exhaustion.
-        run_id: Checkpoint thread id; generated when omitted.
+        paths: Files targeted for scanning.
+        ctx_store: Persistent cache for skipping known files.
+        llm_client: Client for LLM summarization.
+
+    Returns:
+        Aggregate scout result summary.
     """
     # Reuse planner output when given; otherwise read+compress here (offloaded).
     if precomputed_misses is not None:

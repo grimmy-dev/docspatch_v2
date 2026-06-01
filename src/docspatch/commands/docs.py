@@ -1,4 +1,4 @@
-"""``dp docs`` — generate docstrings for undocumented functions."""
+"""Manage the documentation generation pipeline for source code."""
 
 import asyncio
 from pathlib import Path
@@ -30,15 +30,22 @@ log = get_logger("docs")
 PATHS_ARG = typer.Argument(None, help="One or more .py files or directories (repo-relative).")
 NO_IGNORE_OPTION = typer.Option(False, "--no-ignore", help="Skip .gitignore + .docsignore filtering for explicit paths and dirs.")
 CHECK_OPTION = typer.Option(False, "--check", help="Preview undocumented functions and cost; write nothing.")
-UPDATE_OPTION = typer.Option(False, "--update", help="Regenerate docstrings even where the source is unchanged.")
+UPDATE_OPTION = typer.Option(
+    False,
+    "--update",
+    help="Regenerate every module and top-level/method docstring, even unchanged ones. "
+    "Functions nested inside other functions are not documented.",
+)
 REMARKS_OPTION = typer.Option(None, "--remarks", help="Extra instruction added to every docstring prompt.")
 RESUME_OPTION = typer.Option(False, "--resume", help="Resume the most recent interrupted run.")
 
 
 def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
-    """Document every undocumented function across ``flags.paths``.
+    """Document every undocumented function across specified paths.
 
-    Holds the per-repo run lock for the whole pipeline.
+    Args:
+        flags: Configuration flags for the run.
+        prompter: Interface for user input.
     """
     validate_run_flags(flags)
     repo_root = Path.cwd()
@@ -137,7 +144,15 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
 
 
 def offer_resume(repo_root: Path, p: Prompter) -> str | None:
-    """Detect an interrupted run; offer to resume it."""
+    """Detect an interrupted run and request user confirmation to resume.
+
+    Args:
+        repo_root: Repository path.
+        p: Prompter interface.
+
+    Returns:
+        The ID of the interrupted run if resumed, or null.
+    """
     incomplete = asyncio.run(list_incomplete_runs(repo_root))
     if not incomplete:
         return None
@@ -154,7 +169,14 @@ def offer_resume(repo_root: Path, p: Prompter) -> str | None:
 
 
 async def run_with_janitor(*args: object, repo_root: Path, **kwargs: object):
-    """Fire the once-per-day sweep, then run the docs pipeline."""
+    """Execute the periodic background cleanup sweep before starting the documentation pipeline.
+
+    Args:
+        repo_root: Repository path.
+
+    Returns:
+        The documentation pipeline result.
+    """
     # Hold a strong reference so the task is not GC'd before the sweep finishes.
     janitor = start_janitor(repo_root)
     try:
@@ -162,6 +184,4 @@ async def run_with_janitor(*args: object, repo_root: Path, **kwargs: object):
     finally:
         await janitor
         # The pipeline's AsyncSqliteSaver is closed by now — safe to vacuum.
-        await asyncio.to_thread(
-            vacuum_checkpoints, repo_root / ".docspatch" / "checkpoints"
-        )
+        await asyncio.to_thread(vacuum_checkpoints, repo_root / ".docspatch" / "checkpoints")

@@ -104,9 +104,7 @@ def test_module_docstring_inserted_at_file_top() -> None:
 
     result = insert_docstring(source, qualname="<module>", docstring="Handle paths.")
 
-    assert result == 'import os\n\n\ndef f():\n    return os\n'.replace(
-        "import os", '"""Handle paths."""\nimport os'
-    )
+    assert result == "import os\n\n\ndef f():\n    return os\n".replace("import os", '"""Handle paths."""\nimport os')
 
 
 def test_module_docstring_replaces_existing() -> None:

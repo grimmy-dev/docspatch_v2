@@ -1,8 +1,4 @@
-"""Generate graph: one LLM call per batch, fanned out with ``Send``.
-
-Wired to an ``AsyncSqliteSaver`` so generated docs persist per super-step;
-``run_generation`` re-issues unfinished batches after a provider switch.
-"""
+"""Manage the asynchronous generation of docstrings through a distributed state graph."""
 
 import asyncio
 from collections.abc import Sequence
@@ -19,10 +15,17 @@ from docspatch.ui.progress import BarHandle
 from docspatch.utils.errors import ParseFailed, TransientExhausted
 
 
-async def generate_for_batch(
-    ctx: GraphContext, batch: BatchRef, feedback: dict[str, list[str]]
-) -> list[GeneratedDoc] | None:
-    """Run one LLM call for ``batch``. ``None`` signals transient exhaustion/cancel."""
+async def generate_for_batch(ctx: GraphContext, batch: BatchRef, feedback: dict[str, list[str]]) -> list[GeneratedDoc] | None:
+    """Execute one LLM call for a batch of targets, returning generated documents or signaling transient failure.
+
+    Args:
+        ctx: Context providing the LLM generator, token ledger, and concurrency controls.
+        batch: Group of targets to process in a single API call.
+        feedback: Prior correction requests per function.
+
+    Returns:
+        The generated document items or null if the batch requires a retry.
+    """
     items: list[DocstringItem] = []
     refs: list[TargetRef] = []
     for ref in batch.targets:
@@ -45,11 +48,9 @@ async def generate_for_batch(
 
     try:
         async with ctx.sem:
-            docs_map, usage = await asyncio.wait_for(
-                ctx.generator.generate_batch(items, ctx.tone), timeout=ctx.call_timeout
-            )
+            docs_map, usage = await asyncio.wait_for(ctx.generator.generate_batch(items, ctx.tone), timeout=ctx.call_timeout)
         ctx.ledger.append(batch.id, usage)
-    except (TransientExhausted, asyncio.CancelledError, TimeoutError):
+    except TransientExhausted, asyncio.CancelledError, TimeoutError:
         # Exhaustion, Ctrl-C cancellation, or a hung call past call_timeout —
         # leave the batch unmarked so run_generation re-issues or switches.
         return None
@@ -72,17 +73,28 @@ async def generate_for_batch(
 
     new_docs: list[GeneratedDoc] = []
     for ref in refs:
-        doc = docs_map.get(f"{ref.rel}::{ref.qualname}")
-        if doc is None:
-            continue
-        new_docs.append(GeneratedDoc(rel=ref.rel, qualname=ref.qualname, docstring=doc))
+        key = f"{ref.rel}::{ref.qualname}"
+        doc = docs_map.get(key)
+        if doc and doc.strip():
+            new_docs.append(GeneratedDoc(rel=ref.rel, qualname=ref.qualname, docstring=doc))
+        else:
+            # Model omitted this key even after retries — surface it for review
+            # instead of dropping it, so --update never silently skips a function.
+            new_docs.append(GeneratedDoc(rel=ref.rel, qualname=ref.qualname, docstring="", parse_failed=True))
         if ctx.advance is not None:
-            ctx.advance(f"{ref.rel}::{ref.qualname}")
+            ctx.advance(key)
     return new_docs
 
 
 def make_generate(ctx: GraphContext):  # noqa: ANN201
-    """One LLM call per batch. Semaphore caps cross-batch concurrency."""
+    """Construct the generation node for the state graph with enforced concurrency limits.
+
+    Args:
+        ctx: Context used for generation and state management.
+
+    Returns:
+        The graph node function.
+    """
 
     async def generate(payload: dict) -> GenerateState:
         batch: BatchRef = payload["batch"]
@@ -104,12 +116,18 @@ async def run_generation(
     *,
     initial_feedback: dict[str, list[str]] | None = None,
 ) -> None:
-    """Run batches; on transient exhaustion swap generator and re-issue the unfinished set.
+    """Process all batches, handling generator swaps and retries for unfinished tasks.
 
-    Ctrl-C surfaces as ``asyncio.CancelledError`` inside the running node, where
-    ``generate_for_batch`` catches it — the batch stays unmarked and ``run_fanout``
-    treats it like any other unfinished batch.
+    Args:
+        ctx: Context orchestrating the generation process.
+        saver: Database provider for persisting graph state.
+        config: Configuration object for graph execution.
+        pending: List of batches awaiting generation.
+        switch_handler: Optional callback to rotate the generator model.
+        bar: Progress display handle.
+        initial_feedback: Optional map of previous user corrections.
     """
+
     def payload_fn(state: dict[str, Any], b: BatchRef) -> dict[str, Any]:
         return {"batch": b, "feedback": state.get("feedback", {})}
 
@@ -133,9 +151,7 @@ async def run_generation(
         if bar is None:
             return
         done_keys: set[GenKey] = {(d.rel, d.qualname) for d in current.get("generated", [])}
-        remaining_fns = sum(
-            1 for b in remaining for ref in b.targets if (ref.rel, ref.qualname) not in done_keys
-        )
+        remaining_fns = sum(1 for b in remaining for ref in b.targets if (ref.rel, ref.qualname) not in done_keys)
         bar.set_status(f"Rerunning remaining · wave {wave} · {remaining_fns} fn(s)")
 
     initial: GenerateState = {"batches": pending}

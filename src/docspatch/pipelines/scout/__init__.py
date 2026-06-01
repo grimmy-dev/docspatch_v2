@@ -1,4 +1,4 @@
-"""Scout pipeline — cache-aware, token-batched LLM summarisation on LangGraph."""
+"""Export the primary scouting interface. This module simplifies access to the scouting pipeline."""
 
 from docspatch.pipelines.scout.graph import run_scout
 

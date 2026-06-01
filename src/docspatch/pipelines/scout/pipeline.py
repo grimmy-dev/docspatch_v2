@@ -1,8 +1,4 @@
-"""``dp init`` scout wrapper: scan, estimate, confirm, run, report.
-
-Adds the UX around :func:`run_scout` — cost panel, confirmation prompt,
-progress bar, exhaustion-driven provider switch.
-"""
+"""Orchestrate the pre-build scouting workflow. This module interacts with the user to manage scouting, caching, and cost estimation."""
 
 import asyncio
 from pathlib import Path
@@ -33,10 +29,12 @@ def pre_build(
     api_key: str,
     p: Prompter,
 ) -> None:
-    """Refresh the scout cache for every tracked Python file.
+    """Trigger the scouting pipeline for tracked files.
 
-    No-op when the repo has no tracked files, the cache is current, or the user
-    declines the confirmation.
+    Args:
+        repo_root: Directory containing the codebase.
+        ctx_store: Scout cache for persistent state.
+        store: Configuration manager.
     """
     paths = tracked_paths(repo_root)
     if not paths:
@@ -61,10 +59,13 @@ def pre_build(
 
 
 def tracked_paths(repo_root: Path) -> list[str]:
-    """Every repo ``.py`` file minus ``.docsignore`` matches, repo-relative.
+    """Gather project files while excluding ignored paths.
 
-    Routes through the shared :func:`discover_targets` entrypoint so scout sees
-    the same file list as ``dp docs``. Empty list when the repo has no Python.
+    Args:
+        repo_root: Path to the repository.
+
+    Returns:
+        List of relative paths.
     """
     root = repo_root.resolve()
     try:
@@ -75,7 +76,12 @@ def tracked_paths(repo_root: Path) -> list[str]:
 
 
 def print_estimate(provider: str, scan: ScanPlan) -> None:
-    """Render the projected cost panel for an uncached scan."""
+    """Display the projected cost panel for a scan operation.
+
+    Args:
+        provider: The name of the LLM provider.
+        scan: The plan detailing files to be scouted.
+    """
     fast_info = tier_info(provider, "fast")
     est = estimate_cost(provider, "fast", scan.token_estimate)
     console.print(
@@ -101,7 +107,16 @@ def execute(
     scan: ScanPlan,
     p: Prompter,
 ) -> None:
-    """Run the scout pipeline against ``scan.uncached`` and report the outcome."""
+    """Run the scout pipeline for identified targets and report the final outcome.
+
+    Args:
+        ctx_store: The cache storage for scout context.
+        store: The global configuration storage.
+        provider: The LLM provider for the operation.
+        api_key: The authentication key for the provider.
+        scan: The scan plan identifying files to process.
+        p: The prompt manager.
+    """
     retry_display = RetryDisplay()
     llm = LLMClient(provider=provider, api_key=api_key, generator_tier="fast", retry_cb=retry_display)
     targets = list(scan.uncached)
@@ -140,7 +155,12 @@ def execute(
 
 
 def report_scout(provider: str, result: ScoutResult) -> None:
-    """Render the scout pre-build outcome through the shared summary panel."""
+    """Render the summary panel for the scouting process.
+
+    Args:
+        provider: The provider used for the scout.
+        result: The outcome of the scouting process.
+    """
     usage = TokenUsage(result.input_tokens, result.output_tokens)
     rows = [
         ("Model", f"{tier_info(provider, 'fast').model} ({provider})"),

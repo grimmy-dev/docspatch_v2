@@ -63,9 +63,7 @@ def test_concurrent_batches_finish_in_one_batch_walltime(tmp_path: Path) -> None
     assert elapsed < delay * 3
 
 
-def test_heavy_parse_in_worker_does_not_stall_other_batches(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_heavy_parse_in_worker_does_not_stall_other_batches(tmp_path: Path, monkeypatch) -> None:
     """A blocking parse inside one batch's worker must not freeze the others.
 
     ``store_summary`` offloads ``extract_function_metadata``; if it ran on the

@@ -1,12 +1,4 @@
-"""Interactive selection of provider, key, tier, tone, license + persistence.
-
-Every selector follows the same skip-or-prompt contract: if the value is
-already set and ``reconfigure`` is False, the selector echoes the existing
-value (masked when secret) and returns it. Otherwise it prompts.
-
-All selectors are synchronous — questionary spins its own event loop, so
-selectors must never be called from inside an already-running loop.
-"""
+"""Handle user selection of LLM configurations and license settings via CLI prompts."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -48,12 +40,16 @@ def ensure_configured(
     *,
     reconfigure: bool = False,
 ) -> Selections:
-    """Gather provider/key/model/tone, persist, return ``Selections``.
+    """Gather configuration, persist it, and return Selections.
 
-    Reused by any command that needs an authenticated LLM. Prompts only for
-    fields not already on disk; ``reconfigure=True`` forces every prompt.
-    Persistence happens once, after every prompt completes, so a Ctrl-C
-    mid-prompt leaves config untouched.
+    Args:
+        store: Config storage instance.
+        p: Prompter instance.
+        validate_key: Function to validate API keys.
+        reconfigure: Whether to force new input regardless of existing values.
+
+    Returns:
+        The consolidated configuration object.
     """
     selections = gather_selections(store, p, validate_key, reconfigure=reconfigure)
     persist(store, selections)
@@ -67,7 +63,17 @@ def gather_selections(
     *,
     reconfigure: bool = False,
 ) -> Selections:
-    """Collect every config field needed by ``dp init`` in deterministic order."""
+    """Collect every config field needed for initialization.
+
+    Args:
+        store: Config storage instance.
+        p: Prompter instance.
+        validate_key: Function to validate API keys.
+        reconfigure: Whether to force prompts.
+
+    Returns:
+        The Selections object.
+    """
     provider = select_provider(store, p, reconfigure=reconfigure)
     api_key = select_api_key(provider, store, p, validate_key, reconfigure=reconfigure)
     generator_model = select_tier(provider, store, p, reconfigure=reconfigure)
@@ -76,7 +82,12 @@ def gather_selections(
 
 
 def persist(store: ConfigStore, selections: Selections) -> None:
-    """Write ``selections`` to the appropriate scopes (global vs repo)."""
+    """Write selections to global or repository-level storage.
+
+    Args:
+        store: The storage destination.
+        selections: The config data to save.
+    """
     scout_model = resolve_tier_model(selections.provider, "fast")
     store.write_global(
         {
@@ -94,7 +105,16 @@ def persist(store: ConfigStore, selections: Selections) -> None:
 
 
 def select_provider(store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> str:
-    """Determine the preferred LLM provider."""
+    """Determine the preferred LLM provider.
+
+    Args:
+        store: Storage instance.
+        p: Prompter instance.
+        reconfigure: Whether to force a prompt.
+
+    Returns:
+        The chosen provider name.
+    """
     existing = store.read().provider
     return select_or_skip("provider", existing.value, existing.scope, lambda: ask_provider(p), reconfigure)
 
@@ -107,7 +127,18 @@ def select_api_key(
     *,
     reconfigure: bool = False,
 ) -> str:
-    """Retrieve or prompt for a valid API key."""
+    """Retrieve or prompt for a valid API key.
+
+    Args:
+        provider: The provider name.
+        store: Storage instance.
+        p: Prompter instance.
+        validate_key: Key validation callback.
+        reconfigure: Whether to force a prompt.
+
+    Returns:
+        The validated API key string.
+    """
     stored = store.api_key_for(provider)
     return select_or_skip(
         f"api_key_{provider}",
@@ -119,7 +150,17 @@ def select_api_key(
 
 
 def select_tier(provider: str, store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> str:
-    """Select the generation model tier."""
+    """Select the generation model tier.
+
+    Args:
+        provider: Provider name.
+        store: Storage instance.
+        p: Prompter instance.
+        reconfigure: Whether to force a prompt.
+
+    Returns:
+        The chosen model name.
+    """
     existing = store.read().generator_model
     return select_or_skip(
         "generator_model",
@@ -131,15 +172,27 @@ def select_tier(provider: str, store: ConfigStore, p: Prompter, *, reconfigure: 
 
 
 def select_tone(store: ConfigStore, p: Prompter, *, reconfigure: bool = False) -> str:
-    """Select the desired documentation style."""
+    """Select the desired documentation style.
+
+    Args:
+        store: Storage instance.
+        p: Prompter instance.
+        reconfigure: Whether to force a prompt.
+
+    Returns:
+        The chosen tone string.
+    """
     existing = store.read().tone
     return select_or_skip("tone", existing.value, existing.scope, lambda: ask_tone(p), reconfigure)
 
 
 def select_license(repo_root: Path, p: Prompter, *, reconfigure: bool = False) -> None:
-    """Prompt for license, write LICENSE file + pyproject field if absent.
+    """Prompt for license and write files if missing.
 
-    No-op when both already present unless ``reconfigure`` forces a re-prompt.
+    Args:
+        repo_root: Repository path.
+        p: Prompter instance.
+        reconfigure: Force re-prompting.
     """
     license_file = repo_root / "LICENSE"
     pyproject = repo_root / "pyproject.toml"
@@ -172,7 +225,14 @@ def select_license(repo_root: Path, p: Prompter, *, reconfigure: bool = False) -
 
 
 def resolve_author(repo_root: Path) -> tuple[str | None, str | None]:
-    """Return ``(name, email)`` from git config; either may be None when unset."""
+    """Return git author name and email from configuration.
+
+    Args:
+        repo_root: Repository root.
+
+    Returns:
+        A tuple of name and email (both strings or nulls).
+    """
     git = GitReader(repo_root)
     return git.config("user.name"), git.config("user.email")
 
@@ -184,7 +244,18 @@ def select_or_skip(
     prompt_fn: Callable[[], str],
     reconfigure: bool,
 ) -> str:
-    """Echo + return existing value when set, else prompt."""
+    """Echo existing value if set, else run prompt function.
+
+    Args:
+        field: Name of the field.
+        existing_value: Cached configuration value.
+        scope: Configuration scope.
+        prompt_fn: The function to run if no value exists.
+        reconfigure: Whether to ignore existing value.
+
+    Returns:
+        The determined field value.
+    """
     if not reconfigure and existing_value is not None and scope != "default":
         console.print(f"[dim]{field}: already set ({display_value(field, existing_value)})[/dim]")
         return existing_value
@@ -192,14 +263,33 @@ def select_or_skip(
 
 
 def ask_provider(p: Prompter) -> str:
-    """Ask the user to select an LLM provider."""
+    """Ask the user to select an LLM provider.
+
+    Args:
+        p: Prompter instance.
+
+    Returns:
+        The provider selection.
+    """
     choice = str(p.select("Select LLM provider:", ["anthropic", "openai", "gemini"]))
     console.print(f"[green]✓[/green] provider: {choice}")
     return choice
 
 
 def ask_api_key(provider: str, p: Prompter, validate_key: ValidateKey) -> str:
-    """Prompt for an API key and verify it via the injected ``validate_key`` callback."""
+    """Prompt for an API key and verify via callback.
+
+    Args:
+        provider: The target provider.
+        p: Prompter instance.
+        validate_key: Validation callback function.
+
+    Returns:
+        The validated API key.
+
+    Raises:
+        ConfigError: Validation fails or the key is invalid.
+    """
     api_key = p.password(f"Enter {provider} API key:")
     try:
         with status(f"Validating {provider} API key..."):
@@ -213,7 +303,15 @@ def ask_api_key(provider: str, p: Prompter, validate_key: ValidateKey) -> str:
 
 
 def ask_tier(provider: str, p: Prompter) -> str:
-    """Ask the user to choose an LLM model tier."""
+    """Ask the user to choose an LLM model tier.
+
+    Args:
+        provider: LLM provider name.
+        p: Prompter instance.
+
+    Returns:
+        The chosen model name.
+    """
     tiers = TIER_CATALOGUE[as_provider(provider)]
     fast_model = resolve_tier_model(provider, "fast")
     console.print(f"[dim]Scout model (fixed): {fast_model} (Fast tier)[/dim]")
@@ -238,7 +336,14 @@ def ask_tier(provider: str, p: Prompter) -> str:
 
 
 def ask_tone(p: Prompter) -> str:
-    """Ask the user to choose a documentation tone."""
+    """Ask the user to choose a documentation tone.
+
+    Args:
+        p: Prompter instance.
+
+    Returns:
+        The selected tone code.
+    """
     choices = {f"{k} — {v}": k for k, v in TONES.items()}
     tone = str(p.select("Select documentation tone:", choices))
     console.print(f"[green]✓[/green] tone: {tone}")
@@ -246,7 +351,12 @@ def ask_tone(p: Prompter) -> str:
 
 
 def update_pyproject_license(pyproject: Path, license_name: str) -> None:
-    """Append a license entry to a pyproject.toml file."""
+    """Append a license entry to a pyproject.toml file.
+
+    Args:
+        pyproject: Path to pyproject.toml.
+        license_name: The license identifier.
+    """
     content = pyproject.read_text()
     if "[project]" in content and "license" not in content:
         new_lines: list[str] = []

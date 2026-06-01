@@ -1,4 +1,4 @@
-"""Shared Rich console instances and the status spinner that uses them."""
+"""Initialize standard console and error streams with Rich utilities."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -14,19 +14,16 @@ FALLBACK_HEIGHT = 24
 
 @contextmanager
 def status(message: str, spinner: str = "dots") -> Iterator[None]:
-    """Show ``message`` with a spinner until the block exits.
-
-    Single source of truth for "working..." indicators on silent operations
-    (validate_key, cache scan, etc.) so the terminal never sits idle.
-    """
+    """Display a working spinner for the duration of a code block."""
     with console.status(message, spinner=spinner):
         yield
 
 
 def terminal_size() -> tuple[int, int]:
-    """Console ``(width, height)``, with an 80x24 fallback.
+    """Retrieve the current terminal dimensions with sensible fallbacks.
 
-    Guards against a virtual terminal that reports 0 or errors on a size query.
+    Returns:
+        A tuple of width and height.
     """
     try:
         size = console.size

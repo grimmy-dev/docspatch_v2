@@ -1,4 +1,4 @@
-"""Persistent per-run audit record at ``.docspatch/runs/<run_id>.json``."""
+"""Run manifest generation and management."""
 
 import json
 from dataclasses import asdict, dataclass, field
@@ -36,26 +36,46 @@ class RunManifest:
 
 
 def manifest_path(repo_root: Path, run_id: str) -> Path:
-    """Path to the manifest file for ``run_id``."""
+    """Locate the manifest file for a specific run.
+
+    Args:
+        repo_root: Repository base directory.
+        run_id: Run identifier.
+
+    Returns:
+        Path object.
+    """
     return repo_root / ".docspatch" / RUNS_SUBDIR / f"{run_id}.json"
 
 
 def now_iso() -> str:
-    """Current UTC time in ISO-8601."""
+    """Return the current UTC timestamp.
+
+    Returns:
+        ISO-8601 string.
+    """
     return datetime.now(UTC).isoformat()
 
 
 def write_manifest(repo_root: Path, manifest: RunManifest) -> None:
-    """Persist ``manifest`` atomically. Secrets are scrubbed from every string."""
+    """Serialize and store a manifest atomically.
+
+    Args:
+        repo_root: Repository base directory.
+        manifest: Run manifest object.
+    """
     payload = json.dumps(asdict(manifest), indent=2, sort_keys=True)
     # Scrub at write time so any error text/path that slipped a key in is masked.
     atomic_write(manifest_path(repo_root, manifest.run_id), scrub(payload))
 
 
-def sweep_run_manifests(
-    repo_root: Path, ttl_days: int = RUN_MANIFEST_TTL_DAYS, now: float | None = None
-) -> None:
-    """Delete manifests older than ``ttl_days``."""
+def sweep_run_manifests(repo_root: Path, ttl_days: int = RUN_MANIFEST_TTL_DAYS, now: float | None = None) -> None:
+    """Remove expired run manifests from the filesystem.
+
+    Args:
+        repo_root: Repository base directory.
+        ttl_days: Retention period in days.
+    """
     import time
 
     runs_dir = repo_root / ".docspatch" / RUNS_SUBDIR

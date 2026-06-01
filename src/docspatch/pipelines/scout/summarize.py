@@ -1,10 +1,4 @@
-"""Per-batch scout summarisation — the LangGraph worker node's payload.
-
-One worker invocation summarises one token-sized batch in a single LLM call.
-Files the model omits from its response are retried once in isolated
-single-file calls before being reported unresolved. Cache writes off-load to a
-worker thread so gzip + atomic write never block the event loop.
-"""
+"""Manage the batch summarization of code files via LLM interaction and cache persistence."""
 
 import asyncio
 
@@ -22,7 +16,15 @@ def merge_function_summaries(
     functions: dict[str, FunctionMetadata],
     llm_summaries: dict[str, str],
 ) -> list[FunctionMetadata]:
-    """Attach LLM one-liners onto AST-extracted FunctionMetadata."""
+    """Combine extracted AST metadata with LLM-generated summaries.
+
+    Args:
+        functions: The map of function names to metadata.
+        llm_summaries: The map of function names to their LLM-generated descriptions.
+
+    Returns:
+        A list of updated FunctionMetadata objects.
+    """
     return [
         FunctionMetadata(
             name=fn.name,
@@ -37,7 +39,13 @@ def merge_function_summaries(
 
 
 async def store_summary(cache: ScoutCache, miss: FileMiss, per_file: FileSummaryOutput) -> None:
-    """Persist the merged summary for ``miss`` to the cache."""
+    """Write the merged summary for a file to the cache.
+
+    Args:
+        cache: The cache storage.
+        miss: The file miss metadata.
+        per_file: The summary output received from the LLM.
+    """
     # Parse and gzip-write off the loop — this runs inside the concurrent batch
     # worker, so blocking here would stall other batches' in-flight LLM calls.
     functions = await asyncio.to_thread(extract_function_metadata, miss.source)
@@ -65,33 +73,51 @@ async def store_summary(cache: ScoutCache, miss: FileMiss, per_file: FileSummary
 
 
 async def summarize_batch(ctx: ScoutContext, batch: ScoutBatch) -> ScoutResult | None:
-    """Summarise one batch via a single LLM call.
+    """Execute the summarization for a specific batch.
 
-    Returns ``None`` on transient exhaustion, cancellation, or timeout so the
-    graph leaves the batch unmarked and ``run_scout`` can re-issue it. A schema
-    parse failure is terminal: its files are reported unresolved, not re-issued.
+    Args:
+        ctx: The current scout context.
+        batch: The batch of files to process.
+
+    Returns:
+        The result of the summary operation, or None if the batch should be retried.
     """
     misses = [ctx.misses[p] for p in batch.paths if p in ctx.misses]
     if not misses:
         return ScoutResult(scouted=0, skipped=0)
     try:
         return await _run_batch(ctx, misses)
-    except (TransientExhausted, asyncio.CancelledError, TimeoutError):
+    except TransientExhausted, asyncio.CancelledError, TimeoutError:
         return None
     except ParseFailed:
         return ScoutResult(scouted=0, skipped=0, unresolved=tuple(m.path for m in misses))
 
 
-async def _invoke(
-    ctx: ScoutContext, chain: TypedRunnable[BatchSummaryOutput], prompt: str
-) -> tuple[BatchSummaryOutput, TokenUsage]:
-    """One gated, timeout-bounded LLM call. A hung call past ``call_timeout`` raises."""
+async def _invoke(ctx: ScoutContext, chain: TypedRunnable[BatchSummaryOutput], prompt: str) -> tuple[BatchSummaryOutput, TokenUsage]:
+    """Perform a gated, timeout-bounded LLM call.
+
+    Args:
+        ctx: The scout context managing rate limits.
+        chain: The executable LLM chain.
+        prompt: The prompt string to process.
+
+    Returns:
+        A tuple containing the output object and token usage statistics.
+    """
     async with ctx.gate:
         return await asyncio.wait_for(chain.ainvoke(prompt), timeout=ctx.call_timeout)
 
 
 async def _run_batch(ctx: ScoutContext, misses: list[FileMiss]) -> ScoutResult:
-    """Send one batch as a single LLM call; retry omitted paths once in isolation."""
+    """Send a batch of files to the LLM and handle retries for unresolved files.
+
+    Args:
+        ctx: The scout context.
+        misses: The list of file misses in the batch.
+
+    Returns:
+        The combined scouting result for the batch.
+    """
     chain = ctx.client.with_structured_output(BatchSummaryOutput)
     response, usage = await _invoke(ctx, chain, build_batch_prompt(misses))
 
@@ -124,7 +150,16 @@ async def _persist(
     misses: list[FileMiss],
     response: BatchSummaryOutput,
 ) -> tuple[list[str], list[FileMiss]]:
-    """Write every recognised path; return (written paths, paths missing from response)."""
+    """Process the LLM response and update the cache for each recognized file.
+
+    Args:
+        ctx: The scout context.
+        misses: The expected list of file misses.
+        response: The structured output from the LLM.
+
+    Returns:
+        A tuple containing lists of successfully written files and remaining missing files.
+    """
     written: list[str] = []
     missing: list[FileMiss] = []
     for miss in misses:

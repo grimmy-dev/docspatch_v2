@@ -1,4 +1,4 @@
-"""Docspatch CLI — entry point and command registration for the `dp` command."""
+"""Command-line interface entry point."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -21,9 +21,7 @@ app = typer.Typer(
 config_app = typer.Typer(help="View or edit docspatch config.")
 app.add_typer(config_app, name="config")
 
-DEBUG_OPTION = typer.Option(
-    False, "--debug", help="Trace every step, show error context, and print full tracebacks."
-)
+DEBUG_OPTION = typer.Option(False, "--debug", help="Trace every step, show error context, and print full tracebacks.")
 RECONFIGURE_OPTION = typer.Option(
     False,
     "--reconfigure",
@@ -32,13 +30,12 @@ RECONFIGURE_OPTION = typer.Option(
 
 
 def invoke_command(fn: Callable[..., None], debug: bool, name: str = "command") -> None:
-    """Run a command with central logging + error handling.
+    """Execute a command while handling logging and exceptions centrally.
 
-    - DocspatchError: prints `[code] message` + `hint`, exits with the code
-      mapped to the error class. With `--debug` it also shows the context dict
-      and re-raises for a full traceback.
-    - KeyboardInterrupt: prints cancellation, exits 130.
-    - Any other exception is an internal bug: generic error, exit 3.
+    Args:
+        fn: Function to run.
+        debug: Enable verbose tracing.
+        name: Command label.
     """
     configure_logging(debug)
     log.debug("running command: %s", name)
@@ -66,7 +63,11 @@ def invoke_command(fn: Callable[..., None], debug: bool, name: str = "command") 
 
 @app.command("init")
 def init_cmd(reconfigure: bool = RECONFIGURE_OPTION, debug: bool = DEBUG_OPTION) -> None:
-    """Initialise docspatch in this repo."""
+    """Set up docspatch configurations in the current project.
+
+    Args:
+        reconfigure: Force prompts for existing settings.
+    """
     invoke_command(lambda: init.run(reconfigure=reconfigure), debug, "init")
 
 
@@ -80,14 +81,14 @@ def docs_cmd(
     no_ignore: bool = docs.NO_IGNORE_OPTION,
     debug: bool = DEBUG_OPTION,
 ) -> None:
-    """Generate documentation for undocumented functions in files or directories.
+    """Run the documentation generator.
 
-    Examples:
-        dp docs                     document the whole repo
-        dp docs src/                document everything under src/
-        dp docs src/app.py          document a single file
-        dp docs --check src/        preview what needs docs, write nothing
-        dp docs --resume           continue the most recent interrupted run
+    Args:
+        paths: Files or directories to document.
+        check: Validate changes without writing.
+        update: Overwrite existing docs.
+        remarks: Optional user context for doc generation.
+        resume: Continue from the last aborted run.
     """
     flags = docs.RunFlags(
         paths=tuple(paths or ()),
@@ -102,18 +103,27 @@ def docs_cmd(
 
 @app.command("cleanup")
 def cleanup_cmd(debug: bool = DEBUG_OPTION) -> None:
-    """Interactively remove docspatch artefacts."""
+    """Clean up internal metadata and cache files."""
     invoke_command(cleanup.run, debug, "cleanup")
 
 
 @config_app.callback(invoke_without_command=True)
 def config_cb(ctx: typer.Context, debug: bool = DEBUG_OPTION) -> None:
-    """Show merged config when called bare; subcommands edit individual keys."""
+    """Callback to display merged project configuration.
+
+    Args:
+        ctx: Context for the command.
+    """
     if ctx.invoked_subcommand is None:
         invoke_command(config.run, debug, "config")
 
 
 @config_app.command("set")
 def config_set(key: str, value: str, debug: bool = DEBUG_OPTION) -> None:
-    """Set a single config key (scope inferred from key)."""
+    """Modify a specific configuration value.
+
+    Args:
+        key: Setting key to change.
+        value: New value to assign.
+    """
     invoke_command(lambda: config.run_set(key, value), debug, "config set")

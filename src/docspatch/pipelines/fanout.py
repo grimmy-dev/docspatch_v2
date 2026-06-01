@@ -1,11 +1,5 @@
-"""Shared Send fan-out: build the batch graph and drive the re-issue/switch loop.
-
-Both the scout summarise graph and the docs generate graph fan out one LLM call
-per token-sized batch, checkpoint each batch's completion, and re-issue the
-unfinished set on a provider switch after transient exhaustion. The router, the
-graph shape, and that retry loop live here once; callers supply the worker node,
-the Send payload for a batch, and what to swap when a client is exhausted.
-"""
+"""Support distributed parallel execution via graph state.
+This module defines primitives for routing tasks and managing fan-out workflow life cycles."""
 
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
@@ -32,15 +26,19 @@ SwitchFn = Callable[[], Awaitable[bool]]
 
 
 def make_router(node_name: str, payload_fn: PayloadFn) -> Callable[[dict[str, Any]], list[Send] | str]:
-    """Fan out to ``node_name`` for every batch whose id is not yet completed."""
+    """Build a routing function for conditional node invocation.
+
+    Args:
+        node_name: Name of the target processing node.
+        payload_fn: Callable to construct node input from state.
+
+    Returns:
+        Routing logic for the state graph.
+    """
 
     def route(state: dict[str, Any]) -> list[Send] | str:
         completed = set(state.get("completed_batches", []))
-        sends = [
-            Send(node_name, payload_fn(state, batch))
-            for batch in state.get("batches", [])
-            if batch.id not in completed
-        ]
+        sends = [Send(node_name, payload_fn(state, batch)) for batch in state.get("batches", []) if batch.id not in completed]
         return sends or END
 
     return route
@@ -53,7 +51,17 @@ def build_fanout_graph(
     payload_fn: PayloadFn,
     saver: AsyncSqliteSaver,
 ) -> Any:  # noqa: ANN401 — langgraph's compiled graph type is not publicly nameable
-    """START → conditional Send fan-out (skipping done batches) → worker → END."""
+    """Compile a state graph for parallel batch processing.
+
+    Args:
+        node_name: Target processing node identifier.
+        node: Async function for processing batches.
+        payload_fn: Logic to prepare batch data.
+        saver: Checkpointer for persisting execution state.
+
+    Returns:
+        Compiled graph instance.
+    """
     g: StateGraph = StateGraph(state_type)
     g.add_node(node_name, node)
     g.add_conditional_edges(START, make_router(node_name, payload_fn), [node_name, END])
@@ -62,7 +70,15 @@ def build_fanout_graph(
 
 
 async def load_state(saver: AsyncSqliteSaver, config: RunnableConfig) -> dict[str, Any]:
-    """Return last-committed state values for ``config`` (empty dict when fresh)."""
+    """Fetch the last committed state from a checkpointer.
+
+    Args:
+        saver: Async checkpointer instance.
+        config: Runnable configuration including thread identifier.
+
+    Returns:
+        Current state dictionary.
+    """
     snap = await saver.aget_tuple(config)
     if snap is None or snap.checkpoint is None:
         return {}
@@ -79,12 +95,15 @@ async def run_fanout[B: HasId](
     label: str,
     on_wave: Callable[[int, dict[str, Any], Sequence[B]], None] | None = None,
 ) -> dict[str, Any]:
-    """Run batches, re-issuing the unfinished set each time ``switch`` swaps the client.
+    """Execute batches in waves until completion or exhaustion.
 
-    ``initial`` seeds the first wave and may carry reducer channels (e.g. feedback);
-    later waves carry only the remaining batches, since those channels persist in the
-    checkpoint. A ``switch`` of ``None`` turns exhaustion into ``TransientExhausted``;
-    ``label`` names the pipeline in that error. Returns the last committed state.
+    Args:
+        graph: The compiled state graph.
+        pending: Sequenced batches awaiting processing.
+        switch: Handler for swapping exhausted resources.
+
+    Returns:
+        The final aggregate state.
     """
     state = dict(initial)
     wave = 0

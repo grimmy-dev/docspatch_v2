@@ -1,8 +1,4 @@
-"""Per-run context for scout graph nodes.
-
-``ScoutContext`` holds what nodes need but must not enter graph state: the live
-client, the file bodies, the concurrency gate, the progress callback.
-"""
+"""Define the operational context for file scouting. This module coordinates state, configuration, and transient resource dependencies."""
 
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
@@ -29,15 +25,13 @@ class ScoutContext:
         progress_cb: ProgressCb | None,
         call_timeout: float,
     ) -> None:
-        """Initialize the scouting context with necessary dependencies.
+        """Establish the scouting configuration and operational dependencies.
 
         Args:
-            client: The LLM client instance.
-            misses: Dictionary of file misses requiring analysis.
-            cache: The scout cache instance.
-            gate: The rate limit gate.
-            progress_cb: Optional callback for reporting progress.
-            call_timeout: Time limit for LLM requests.
+            client: LLM client for analysis.
+            misses: Files needing evaluation.
+            cache: Cache store for scout results.
+            gate: Semaphore for concurrency limiting.
         """
         self.client = client
         self.misses = misses

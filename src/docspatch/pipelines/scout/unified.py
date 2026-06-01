@@ -1,9 +1,4 @@
-"""Unified SUMMARY.md: one directory-grouped view of every cached summary.
-
-Rebuilt in full from the scout cache after each run — no LLM call. Each file
-block is wrapped in HTML-comment path markers so README generation can select
-blocks by path.
-"""
+"""Generate and manage the unified markdown summary file for the project."""
 
 from collections import defaultdict
 from collections.abc import Iterable
@@ -19,7 +14,14 @@ UNIFIED_NAME = "SUMMARY.md"
 
 
 def render_block(summary: FileSummary) -> str:
-    """Render one file's marker-wrapped block."""
+    """Produce a markdown-formatted block for a single file summary.
+
+    Args:
+        summary: The file summary data.
+
+    Returns:
+        The rendered markdown block.
+    """
     lines = [
         MARKER_OPEN.format(path=summary.path),
         f"## {Path(summary.path).name}",
@@ -40,7 +42,14 @@ def render_block(summary: FileSummary) -> str:
 
 
 def render_unified(summaries: Iterable[FileSummary]) -> str:
-    """Render all summaries grouped by directory, each block path-marked."""
+    """Assemble all file summaries into a grouped, directory-indexed markdown structure.
+
+    Args:
+        summaries: The collection of summaries to process.
+
+    Returns:
+        The complete unified markdown document.
+    """
     by_dir: dict[str, list[FileSummary]] = defaultdict(list)
     for summary in summaries:
         by_dir[str(Path(summary.path).parent)].append(summary)
@@ -54,7 +63,16 @@ def render_unified(summaries: Iterable[FileSummary]) -> str:
 
 
 def write_unified(cache: ScoutCache, paths: Iterable[str], repo_root: Path) -> Path:
-    """Rebuild .docspatch/SUMMARY.md from the cached summaries for ``paths``."""
+    """Write the updated unified summary file to the repository.
+
+    Args:
+        cache: The cache storage.
+        paths: The set of paths to include in the summary.
+        repo_root: The filesystem root of the repository.
+
+    Returns:
+        The path to the created summary file.
+    """
     summaries = [s for p in paths if (s := cache.get(p)) is not None]
     out_path = repo_root / ".docspatch" / UNIFIED_NAME
     atomic_write(out_path, render_unified(summaries))

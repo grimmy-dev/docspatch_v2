@@ -6,18 +6,28 @@ from dataclasses import dataclass
 from docspatch.llm import TokenUsage
 from docspatch.pipelines.docs.generator import LLMDocstringGenerator
 from docspatch.pipelines.docs.prompts import DocstringItem
+from docspatch.schemas import DocstringSpec
+
+
+def specs(payload: dict[str, str]) -> dict[str, DocstringSpec]:
+    """Wrap each description string in a description-only spec.
+
+    A spec with no args/returns/raises renders back to its bare description, so
+    the rendered output equals the input string.
+    """
+    return {key: DocstringSpec(description=desc) for key, desc in payload.items()}
 
 
 @dataclass
 class FakeChain:
-    """Stub chain returning queued docstring maps per ainvoke call."""
+    """Stub chain returning queued docstring spec maps per ainvoke call."""
 
     responses: list[dict[str, str]]
     calls: list[str]
 
     async def ainvoke(self, prompt: str) -> object:
         self.calls.append(prompt)
-        payload = self.responses.pop(0)
+        payload = specs(self.responses.pop(0))
 
         class Result:
             docstrings = payload
@@ -25,9 +35,7 @@ class FakeChain:
         return Result(), TokenUsage(10, 3)
 
 
-def make_generator(
-    responses: list[dict[str, str]], remarks: str | None = None
-) -> tuple[LLMDocstringGenerator, FakeChain]:
+def make_generator(responses: list[dict[str, str]], remarks: str | None = None) -> tuple[LLMDocstringGenerator, FakeChain]:
     chain = FakeChain(responses=responses, calls=[])
     gen = LLMDocstringGenerator.__new__(LLMDocstringGenerator)
     gen.chain = chain  # type: ignore[assignment]

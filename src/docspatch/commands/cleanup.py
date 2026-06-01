@@ -1,4 +1,4 @@
-"""dp cleanup command — interactive multi-select deletion of docspatch artefacts."""
+"""Interactive removal of internal data artifacts."""
 
 import os
 import shutil
@@ -16,7 +16,14 @@ class CleanupItem:
 
 
 def cleanup_items(repo_root: Path) -> list[CleanupItem]:
-    """Cleanup tasks for the current repo. Labels include size hints when present."""
+    """Compile a list of deletable repository-specific artifacts.
+
+    Args:
+        repo_root: Path to the repository root directory.
+
+    Returns:
+        List of cleanup items.
+    """
     home = Path.home()
     cache_root = repo_root / ".docspatch" / "cache"
     checkpoints = repo_root / ".docspatch" / "checkpoints"
@@ -31,7 +38,14 @@ def cleanup_items(repo_root: Path) -> list[CleanupItem]:
 
 
 def _cache_hint(repo_root: Path) -> str:
-    """`` (N files, X)`` summed across docs + scout caches. Empty when both empty."""
+    """Generate a size and file count description for cache directories.
+
+    Args:
+        repo_root: Path to the repository root.
+
+    Returns:
+        Formatted string with file count and size, or empty string.
+    """
     docs, scout = DocsCache(repo_root).info(), ScoutCache(repo_root).info()
     count = docs.file_count + scout.file_count
     if count == 0:
@@ -40,7 +54,14 @@ def _cache_hint(repo_root: Path) -> str:
 
 
 def _path_hint(path: Path) -> str:
-    """`` (X)`` for a file/dir, `` (absent)`` when missing."""
+    """Create a display string for a path showing its size or indicating it is missing.
+
+    Args:
+        path: Target file or directory path.
+
+    Returns:
+        Descriptive string including file size or status.
+    """
     if not path.exists():
         return " (absent)"
     if path.is_file():
@@ -49,7 +70,14 @@ def _path_hint(path: Path) -> str:
 
 
 def _dir_bytes(root: Path) -> int:
-    """Recursive byte total under ``root``. Skips unreadable entries."""
+    """Calculate the recursive sum of file sizes within a directory.
+
+    Args:
+        root: Target directory path.
+
+    Returns:
+        Total size in bytes.
+    """
     total = 0
     for dirpath, _, files in os.walk(root):
         for f in files:
@@ -61,7 +89,14 @@ def _dir_bytes(root: Path) -> int:
 
 
 def _human_bytes(n: int) -> str:
-    """``1.2 MB`` / ``45 KB`` / ``321 B``."""
+    """Format a byte integer into a readable string using binary units.
+
+    Args:
+        n: Byte integer to format.
+
+    Returns:
+        String representation in B, KB, MB, or GB.
+    """
     if n < 1024:
         return f"{n} B"
     if n < 1024 * 1024:
@@ -72,11 +107,11 @@ def _human_bytes(n: int) -> str:
 
 
 def run(prompter: Prompter | None = None, repo_root: Path | None = None) -> None:
-    """Execute the interactive cleanup process for repository-specific data.
+    """Perform an interactive cleanup operation to remove local configuration or temporary data.
 
     Args:
-        prompter: Optional interface for handling user prompts.
-        repo_root: Optional path to the repository root directory.
+        prompter: Interface for handling user input.
+        repo_root: Root path of the repository.
     """
     p = prompter or QuestionaryPrompter()
     root = repo_root or Path.cwd()
@@ -109,7 +144,11 @@ def run(prompter: Prompter | None = None, repo_root: Path | None = None) -> None
 
 
 def sweep_empty_docspatch_dirs(roots: list[Path]) -> None:
-    """Remove ``.docspatch`` dirs that are empty after deletions. Idempotent."""
+    """Remove .docspatch directories that remain empty after preceding cleanup actions.
+
+    Args:
+        roots: List of potential parent directories to check.
+    """
     for root in roots:
         try:
             if root.is_dir() and not any(root.iterdir()):

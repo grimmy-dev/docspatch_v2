@@ -1,9 +1,4 @@
-"""Docs pipeline orchestrator.
-
-Runs the plan graph, then generation, then the review → commit graph, against
-a single ``AsyncSqliteSaver`` keyed by ``thread_id == run_id`` so a resumed run
-reuses prior work without re-calling the LLM.
-"""
+"""Orchestrate the high-level docstring generation pipeline from planning to final file updates."""
 
 import asyncio
 import time
@@ -37,7 +32,14 @@ from docspatch.utils.secrets import scrub
 
 
 def scrub_for_manifest(exc: BaseException) -> str:
-    """Short, secret-scrubbed exception line for the manifest errors list."""
+    """Format an exception as a short, sensitive-data-scrubbed string suitable for inclusion in a run manifest.
+
+    Args:
+        exc: The exception caught during pipeline execution.
+
+    Returns:
+        A sanitized string representation of the error.
+    """
     return scrub(f"{type(exc).__name__}: {exc}")
 
 
@@ -51,7 +53,17 @@ def _render_docs_summary(
     cache_hits: int,
     scanned: int,
 ) -> None:
-    """Print the end-of-run panel: real tokens, cost, counts, cache-hit ratio."""
+    """Display the final run statistics including usage costs and performance metrics.
+
+    Args:
+        outcome: Result of the final documentation processing step.
+        usage: Aggregated token consumption data.
+        provider: Identifier for the model provider.
+        tier: Performance or cost tier selection for the model.
+        elapsed: Total duration of the generation process in seconds.
+        cache_hits: Count of targets retrieved from the cache.
+        scanned: Total number of files evaluated during the run.
+    """
     model = tier_info(provider, tier).model
     if outcome.aborted:
         rows = [
@@ -94,7 +106,30 @@ async def run_docs(
     retry_display: RetryDisplay | None = None,
     review_handler: ReviewHandler | None = None,
 ) -> DocsResult:
-    """Run the docs pipeline end-to-end."""
+    """Execute the end-to-end documentation generation process.
+
+    Args:
+        paths: List of file paths to process.
+        generator: Configured docstring generation engine.
+        tone: Style guideline for generated content.
+        repo_root: Filesystem path to the repository base.
+        flags: Execution settings for the current run.
+        batch_token_limit: Maximum token count for individual LLM requests.
+        concurrency_limit: Maximum number of parallel generation tasks.
+        provider: Name of the LLM provider.
+        tier: Targeted model performance tier.
+        call_timeout: Time limit for each model request in seconds.
+        cache: Persistent storage for previously generated docs.
+        prompter: Interface for handling interactive user confirmations.
+        auto_confirm: Skip user interaction when initiating the generation process.
+        run_id: Unique identifier for tracking the pipeline session.
+
+    Returns:
+        Result object containing document counts and status information.
+
+    Raises:
+        BaseException: Any error occurs during execution that interrupts the pipeline.
+    """
     flags = flags or RunFlags()
     rid = run_id or make_run_id()
     started = time.monotonic()
@@ -141,9 +176,7 @@ async def run_docs(
         usage_now = ledger.totals()
         manifest.input_tokens = usage_now.input_tokens
         manifest.output_tokens = usage_now.output_tokens
-        manifest.cost_total = actual_cost(
-            provider, tier, usage_now.input_tokens, usage_now.output_tokens
-        ).total
+        manifest.cost_total = actual_cost(provider, tier, usage_now.input_tokens, usage_now.output_tokens).total
         write_manifest(repo_root, manifest)
 
     try:
@@ -155,9 +188,7 @@ async def run_docs(
             # Remarks live on the generator, not in graph state — a resumed run
             # restores them from checkpoint metadata, overriding only on request.
             prior_remarks = (await load_metadata(saver, config)).get("remarks") if is_resume else None
-            remarks = resolve_remarks(
-                is_resume=is_resume, prior=prior_remarks, requested=flags.remarks, prompter=prompter
-            )
+            remarks = resolve_remarks(is_resume=is_resume, prior=prior_remarks, requested=flags.remarks, prompter=prompter)
             generator.remarks = remarks
             config = {"configurable": {"thread_id": rid}, "metadata": {"remarks": remarks}}
 
@@ -185,9 +216,7 @@ async def run_docs(
             done_keys = {(g.rel, g.qualname) for g in existing.get("generated", [])}
             missing = [t for t in plan_state["targets"] if (t.rel, t.qualname) not in done_keys]
             if is_resume:
-                console.print(
-                    f"[dim]Resuming run {rid} · {len(done_keys)} done · {len(missing)} remaining[/dim]"
-                )
+                console.print(f"[dim]Resuming run {rid} · {len(done_keys)} done · {len(missing)} remaining[/dim]")
 
             if missing:
                 offset = max(existing.get("completed_batches", []), default=-1) + 1
@@ -220,8 +249,13 @@ async def run_docs(
             if outcome.aborted:
                 await saver.adelete_thread(f"review-{rid}")
                 _render_docs_summary(
-                    outcome, usage=usage, provider=provider, tier=tier,
-                    elapsed=elapsed, cache_hits=cache_hits, scanned=scanned,
+                    outcome,
+                    usage=usage,
+                    provider=provider,
+                    tier=tier,
+                    elapsed=elapsed,
+                    cache_hits=cache_hits,
+                    scanned=scanned,
                 )
                 manifest.files_skipped = list(outcome.skipped)
                 finalize("aborted")
@@ -229,8 +263,13 @@ async def run_docs(
                 return DocsResult(functions_documented=0, files_documented=0, batches=batch_count, aborted=True)
 
             _render_docs_summary(
-                outcome, usage=usage, provider=provider, tier=tier,
-                elapsed=elapsed, cache_hits=cache_hits, scanned=scanned,
+                outcome,
+                usage=usage,
+                provider=provider,
+                tier=tier,
+                elapsed=elapsed,
+                cache_hits=cache_hits,
+                scanned=scanned,
             )
             manifest.files_documented = list(outcome.committed)
             manifest.files_skipped = list(outcome.skipped)

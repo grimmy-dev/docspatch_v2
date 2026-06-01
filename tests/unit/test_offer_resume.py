@@ -51,9 +51,7 @@ def test_discards_when_user_declines(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert discarded["called"]
 
 
-def test_headless_returns_none_without_prompting(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_headless_returns_none_without_prompting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     async def fake_list(root: Path) -> list[str]:
         return stub_one_run(root)
 

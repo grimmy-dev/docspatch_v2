@@ -1,8 +1,4 @@
-"""Data shapes for the scout pipeline.
-
-``ScoutBatch`` and ``ScoutResult`` travel through the checkpointer, so they are
-Pydantic models. ``FileMiss`` and ``ScanPlan`` never enter graph state.
-"""
+"""Define the internal data structures for tracking scout progress, file misses, and scan results."""
 
 from dataclasses import dataclass
 from operator import add
@@ -39,25 +35,25 @@ class ScanPlan:
 
     @property
     def uncached_count(self) -> int:
-        """Count files that require scouting.
+        """Retrieve the number of files requiring scouting.
 
         Returns:
-            The number of files currently missing from cache.
+            The count of files missing from the cache.
         """
         return len(self.uncached)
 
     @property
     def cached_count(self) -> int:
-        """Count files that are already cached.
+        """Retrieve the number of already cached files.
 
         Returns:
-            The number of cached files.
+            The count of cached files.
         """
         return len(self.cached)
 
     @property
     def all_current(self) -> bool:
-        """Check if all files have been scouted.
+        """Check if all files are up to date in the cache.
 
         Returns:
             True if no files are missing from the cache, False otherwise.

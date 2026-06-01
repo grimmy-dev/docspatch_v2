@@ -1,4 +1,4 @@
-"""Cache-aware planning: which files need scouting, and at what token cost."""
+"""Coordinate scan planning, file partitioning, and context generation for the scout pipeline."""
 
 from collections import defaultdict
 from collections.abc import Iterable
@@ -12,10 +12,14 @@ from docspatch.source import compress, estimate_tokens, file_hash
 
 
 def partition_paths(paths: Iterable[str], ctx_store: ScoutCache) -> tuple[list[str], list[FileMiss]]:
-    """Split ``paths`` into cache hits (path only) and misses (with source + hash).
+    """Split paths into cache hits and misses by checking file existence, modification times, and content hashes.
 
-    Paths are repo-relative POSIX strings; source is read via ``ctx_store.root``.
-    Files unreadable on disk are skipped — they cannot be summarised anyway.
+    Args:
+        paths: The repository-relative paths to evaluate.
+        ctx_store: The cache containing prior scan results.
+
+    Returns:
+        A tuple containing a list of hits and a list of FileMiss objects for cache misses.
     """
     hits: list[str] = []
     misses: list[FileMiss] = []
@@ -50,7 +54,15 @@ def partition_paths(paths: Iterable[str], ctx_store: ScoutCache) -> tuple[list[s
 
 
 def plan_uncached(paths: Iterable[str], ctx_store: ScoutCache) -> ScanPlan:
-    """Build a :class:`ScanPlan` for ``paths``. Token estimate covers misses only."""
+    """Create a ScanPlan for a set of file paths.
+
+    Args:
+        paths: The paths to evaluate for scouting.
+        ctx_store: The scout cache instance.
+
+    Returns:
+        A populated ScanPlan object.
+    """
     hits, misses = partition_paths(paths, ctx_store)
     token_estimate = sum(estimate_tokens(m.compressed) for m in misses)
     return ScanPlan(
@@ -62,7 +74,15 @@ def plan_uncached(paths: Iterable[str], ctx_store: ScoutCache) -> ScanPlan:
 
 
 def build_structured_context(cache: ScoutCache, files: list[str]) -> str:
-    """Render cached scout summaries grouped by directory for downstream prompts."""
+    """Assemble cached summaries grouped by directory for use in downstream prompts.
+
+    Args:
+        cache: The cache containing stored file summaries.
+        files: The list of file paths to include.
+
+    Returns:
+        A formatted string containing structured summary information.
+    """
     by_dir: dict[str, list[FileSummary]] = defaultdict(list)
     for path in files:
         summary = cache.get(path)

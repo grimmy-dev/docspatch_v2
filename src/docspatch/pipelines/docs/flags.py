@@ -1,9 +1,4 @@
-"""Run-level flags for ``dp docs``: data shape, mutex validation, behaviours.
-
-Covers one invocation's flags end to end — the ``RunFlags`` data, conflict
-validation, ``--remarks`` resolution across a resume, and the ``--check``
-preview.
-"""
+"""Define CLI flags and validation logic for documentation operations."""
 
 from __future__ import annotations
 
@@ -47,7 +42,11 @@ _CONFLICTS = (
 
 
 def validate_run_flags(flags: RunFlags) -> None:
-    """Reject conflicting flag combinations with an actionable error."""
+    """Check configuration for conflicting operational flags.
+
+    Raises:
+        ConfigError: Mutually exclusive flags are active.
+    """
     active = {
         "check": flags.check,
         "update": flags.update,
@@ -63,14 +62,11 @@ def validate_run_flags(flags: RunFlags) -> None:
 # ---- --remarks resolution --------------------------------------------------
 
 
-def resolve_remarks(
-    *, is_resume: bool, prior: str | None, requested: str | None, prompter: Prompter | None
-) -> str | None:
-    """Return the remarks to use for this run.
+def resolve_remarks(*, is_resume: bool, prior: str | None, requested: str | None, prompter: Prompter | None) -> str | None:
+    """Select the appropriate remarks based on run status and user input.
 
-    A fresh run uses ``requested``. A resumed run keeps ``prior`` unless a
-    different ``--remarks`` was passed, which overrides after the user confirms
-    (non-interactive runs take the new value without prompting).
+    Returns:
+        The resolved remarks string.
     """
     if not is_resume:
         return requested
@@ -93,13 +89,11 @@ def resolve_remarks(
 # ---- --check preview -------------------------------------------------------
 
 
-def preview_check(
-    files: list[Path], repo_root: Path, cache: DocsCache, provider: str, tier: str
-) -> bool:
-    """Render the ``--check`` preview. Returns True when any function needs docs.
+def preview_check(files: list[Path], repo_root: Path, cache: DocsCache, provider: str, tier: str) -> bool:
+    """Display a preview of the documentation generation plan.
 
-    Writes nothing — the caller maps the result to an exit code so the command
-    works as a pre-commit or post-commit hook.
+    Returns:
+        True if documentation is required for any target.
     """
     found = collect_targets(files, repo_root, cache=cache).targets
     if not found:
@@ -124,8 +118,6 @@ def preview_check(
 
     console.print(f"[bold]{tier_info(provider, tier).model}[/bold] · {tier} tier")
     console.print(build_table(["FILE", "UNDOCUMENTED", "INPUT TOKENS", "COST"], rows))
-    console.print(
-        f"[yellow]{total_fns} function(s) across {len(by_file)} file(s) need docstrings.[/yellow]"
-    )
+    console.print(f"[yellow]{total_fns} function(s) across {len(by_file)} file(s) need docstrings.[/yellow]")
     console.print("[dim]Run [/dim]dp docs[dim] to document them.[/dim]")
     return True

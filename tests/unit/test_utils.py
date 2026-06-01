@@ -17,6 +17,7 @@ def test_insert_copyright_skips_when_already_present():
     body = "MIT License\n\nCopyright (c) 1999 Bob\n\nPermission...\n"
     assert insert_copyright(body, "Ada", 2026) == body
 
+
 # ── config ─────────────────────────────────────────────────────────────────
 
 

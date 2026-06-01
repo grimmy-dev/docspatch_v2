@@ -1,15 +1,4 @@
-"""Greedy token-based batcher.
-
-Invariant: items are atomic. A batcher never splits, truncates, or reformats
-an item. Each item enters exactly one batch as-is. If an item alone exceeds
-`limit`, it lands in its own batch with `oversized=True` so callers can surface
-a UX message instead of dropping it.
-
-Splitting an item's *content* (e.g. a function body, a file) is out of scope —
-that is the caller's responsibility, performed before batching.
-
-Reusable across pipelines: scout (files), docs (functions), readme (sections).
-"""
+"""Provide utilities for batching items based on size limits."""
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -32,7 +21,11 @@ class Batch[T]:
     oversized: bool = False
 
     def __post_init__(self) -> None:
-        """Validate the batch data post-initialization."""
+        """Validate the batch data post-initialization.
+
+        Raises:
+            ValueError: total_size is negative or oversized status is improperly assigned.
+        """
         if self.total_size < 0:
             raise ValueError("total_size must be non-negative")
         if self.oversized and len(self.items) != 1:
@@ -47,22 +40,38 @@ class BatchPlan[T]:
 
     @property
     def batch_count(self) -> int:
-        """Calculate the total number of batches in the plan."""
+        """Calculate the total number of batches in the plan.
+
+        Returns:
+            Integer count.
+        """
         return len(self.batches)
 
     @property
     def item_count(self) -> int:
-        """Calculate the total number of items distributed across batches."""
+        """Calculate the total number of items distributed across batches.
+
+        Returns:
+            Integer count.
+        """
         return sum(len(b.items) for b in self.batches)
 
     @property
     def oversized_count(self) -> int:
-        """Calculate the number of batches marked as oversized."""
+        """Calculate the number of batches marked as oversized.
+
+        Returns:
+            Integer count.
+        """
         return sum(1 for b in self.batches if b.oversized)
 
     @property
     def total_size(self) -> int:
-        """Calculate the total size of all items across all batches."""
+        """Calculate the total size of all items across all batches.
+
+        Returns:
+            Integer count.
+        """
         return sum(b.total_size for b in self.batches)
 
 
@@ -71,21 +80,18 @@ def greedy_batches[T](
     size_fn: Callable[[T], int],
     limit: int,
 ) -> BatchPlan[T]:
-    """Greedy-fill batches up to `limit`. Items are atomic — never split.
+    """Partition items into batches limited by a total cost.
 
     Args:
-        items: Iterable of atomic units. Order is preserved across batches.
-        size_fn: Returns the cost (e.g. token estimate) of including `item`
-            as-is. Must return ≥ 0; negative values raise `ValueError`.
-        limit: Maximum total size per batch. Must be > 0.
+        items: Collection of atomic items to process.
+        size_fn: Function calculating the cost for an individual item.
+        limit: Maximum allowed cost per batch.
 
     Returns:
-        BatchPlan whose batches together contain every input item exactly
-        once. Single items exceeding `limit` are emitted as `oversized=True`
-        batches so callers can surface a UX message without dropping work.
+        A plan containing all items organized into appropriately sized batches.
 
     Raises:
-        ValueError: If `limit <= 0` or `size_fn` returns a negative value.
+        ValueError: The limit is non-positive or the size function returns a negative value.
     """
     if limit <= 0:
         raise ValueError("limit must be positive")

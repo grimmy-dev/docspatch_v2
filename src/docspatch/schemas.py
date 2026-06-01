@@ -1,9 +1,4 @@
-"""Central type surface: literals, narrowers, config/git/source schemas.
-
-One module so callers import a single name and the data shapes stay in one
-place. Grouped by domain below: LLM literals, config, git, source, and the
-structured-output pydantic schemas.
-"""
+"""Define data schemas and configuration models for the application."""
 
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast, get_args
@@ -25,14 +20,34 @@ Tier = Literal["fast", "balanced", "best"]
 
 
 def as_provider(value: str) -> Provider:
-    """Narrow a raw string to the ``Provider`` literal. Raises on unknown."""
+    """Convert a string to a recognized LLM provider literal.
+
+    Args:
+        value: The raw provider string.
+
+    Returns:
+        The validated provider literal.
+
+    Raises:
+        ConfigError: The value does not match any known provider.
+    """
     if value not in get_args(Provider):
         raise ConfigError.unknown_provider(value)
     return cast(Provider, value)
 
 
 def as_tier(value: str) -> Tier:
-    """Narrow a raw string to the ``Tier`` literal. Raises on unknown."""
+    """Convert a string to a recognized model tier literal.
+
+    Args:
+        value: The raw tier string.
+
+    Returns:
+        The validated tier literal.
+
+    Raises:
+        ConfigError: The value does not match any known tier.
+    """
     if value not in get_args(Tier):
         raise ConfigError.unknown_tier(value)
     return cast(Tier, value)
@@ -52,13 +67,13 @@ class ScopedValue[T]:
 
 
 def _default(key: str) -> ScopedValue[Any]:
-    """Retrieve the default configuration for a specific key.
+    """Get the default value for a configuration key.
 
     Args:
-        key: The configuration key to lookup.
+        key: The configuration key to look up.
 
     Returns:
-        A scoped value object with the default setting.
+        A ScopedValue containing the default configuration.
     """
     return ScopedValue(CONFIG_DEFAULTS[key], "default")
 
@@ -90,7 +105,14 @@ class RunSettings:
 
     @classmethod
     def from_config(cls, config: DocspatchConfig) -> RunSettings:
-        """Resolve the run parameters from ``config``, applying defaults."""
+        """Initialize settings from the application configuration.
+
+        Args:
+            config: The raw configuration object.
+
+        Returns:
+            An instance of RunSettings with defaults applied.
+        """
         return cls(
             batch_token_limit=int(config.batch_token_limit.value or DEFAULT_BATCH_TOKEN_LIMIT),
             concurrency_limit=int(config.concurrency_limit.value or DEFAULT_CONCURRENCY_LIMIT),
@@ -171,13 +193,42 @@ class BatchSummaryOutput(BaseModel):
     )
 
 
-class BatchDocstringOutput(BaseModel):
-    """Docstrings for a batch of functions, keyed by ``<rel>::<qualname>`` exactly as given in the prompt."""
+class ArgDoc(BaseModel):
+    """One parameter line under a docstring's ``Args:`` section."""
 
-    docstrings: dict[str, str] = Field(
+    name: str = Field(description="Parameter name exactly as it appears in the signature.")
+    description: str = Field(description="What the parameter is, in one line.")
+
+
+class RaiseDoc(BaseModel):
+    """One exception line under a docstring's ``Raises:`` section."""
+
+    exception: str = Field(description="Exception type the caller may see.")
+    when: str = Field(description="Condition that triggers it.")
+
+
+class DocstringSpec(BaseModel):
+    """Structured docstring fields. The renderer turns these into Google-style text.
+
+    Every section but ``description`` is optional: a void function leaves
+    ``returns`` null, a function that raises nothing leaves ``raises`` empty.
+    The renderer emits a section only when it is populated, so trivial functions
+    get a one-line docstring and nothing more.
+    """
+
+    description: str = Field(description="One line stating what it does, imperative mood, ending with a period.")
+    args: list[ArgDoc] = Field(
+        default_factory=list,
+        description="One entry per parameter worth explaining; omit self/cls and self-evident ones.",
+    )
+    returns: str | None = Field(default=None, description="What it returns. Null for functions that return None.")
+    raises: list[RaiseDoc] = Field(default_factory=list, description="Exceptions a caller should anticipate; empty when none.")
+
+
+class BatchDocstringOutput(BaseModel):
+    """Docstring specs for a batch of targets, keyed by ``<rel>::<qualname>`` exactly as given in the prompt."""
+
+    docstrings: dict[str, DocstringSpec] = Field(
         default_factory=dict,
-        description=(
-            "Mapping keyed by `<rel>::<qualname>` ids from the `Expected ids` list. "
-            "Value = Google-style docstring body, no triple quotes."
-        ),
+        description="Mapping keyed by `<rel>::<qualname>` ids from the `Expected ids` list.",
     )

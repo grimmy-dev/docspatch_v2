@@ -1,8 +1,4 @@
-"""Per-run context shared by the docs pipeline nodes, plus checkpoint helpers.
-
-``GraphContext`` holds everything a node needs that does not belong in graph
-state — heavy source bodies, the live generator, the progress bar handle.
-"""
+"""Manage the runtime context and configuration shared across the documentation generation pipeline."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -52,24 +48,7 @@ class GraphContext:
         call_timeout: float,
         ledger: TokenLedger,
     ) -> None:
-        """Initialize the document generation context with configuration and dependencies.
-
-        Args:
-            generator: The docstring generator instance.
-            sem: Semaphore for controlling concurrent requests.
-            repo_root: Root path of the repository.
-            tone: Desired tone for generated documentation.
-            cache: Optional cache for existing documentation states.
-            provider: Name of the LLM provider.
-            tier: The selected performance tier.
-            prompter: Interface for user interactions.
-            auto_confirm: Flag to bypass manual confirmations.
-            batch_token_limit: Maximum token count allowed per batch.
-            run_id: Unique identifier for the current run.
-            interactive: Boolean flag for interactive mode.
-            call_timeout: Seconds before an LLM call times out.
-            ledger: The token usage ledger.
-        """
+        """Initialize the document generation context with configuration and dependencies."""
         self.generator = generator
         self.sem = sem
         self.repo_root = repo_root
@@ -89,7 +68,11 @@ class GraphContext:
 
 
 async def load_metadata(saver: AsyncSqliteSaver, config: RunnableConfig) -> dict[str, Any]:
-    """Return checkpoint metadata for ``config`` (empty dict when fresh)."""
+    """Fetch checkpoint metadata for the given configuration.
+
+    Returns:
+        The metadata dictionary.
+    """
     snap = await saver.aget_tuple(config)
     if snap is None:
         return {}

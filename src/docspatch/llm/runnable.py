@@ -1,12 +1,4 @@
-"""Typed, retry-aware async runnable returned by ``LLMClient.with_structured_output``.
-
-Two retry mechanisms, kept distinct:
-- Transient errors (rate limit / 5xx / timeout) → the shared ``RateLimitGate``.
-- Schema-validation failure → one corrective re-prompt here, then ``ParseFailed``.
-
-Real token usage is captured with a per-call ``UsageMetadataCallbackHandler``;
-a fresh handler per call keeps usage isolated under concurrent batches.
-"""
+"""Implement retryable LLM runnables with usage tracking and validation."""
 
 from dataclasses import dataclass
 
@@ -21,9 +13,7 @@ from docspatch.utils.retry import RateLimitGate, RetryPolicy
 LLM_RETRY = RetryPolicy(max_attempts=5, base_delay=60.0, max_delay=300.0)
 TRANSIENT_MARKERS = ("rate_limit", "429", "503", "502", "timeout", "overloaded")
 
-PARSE_RETRY_SUFFIX = (
-    "\n\nReturn valid JSON matching the schema exactly. Previous response failed validation."
-)
+PARSE_RETRY_SUFFIX = "\n\nReturn valid JSON matching the schema exactly. Previous response failed validation."
 _PARSE_ERRORS = (OutputParserException, ValidationError)
 """Schema-validation failures: json mode raises the first, tool-calling the second."""
 
@@ -37,10 +27,10 @@ class TokenUsage:
 
     @property
     def total(self) -> int:
-        """Calculate the aggregate number of tokens.
+        """Aggregate the total count of input and output tokens.
 
         Returns:
-            The total count of input and output tokens.
+            Sum of tokens.
         """
         return self.input_tokens + self.output_tokens
 
@@ -48,10 +38,10 @@ class TokenUsage:
         """Sum two token usage instances.
 
         Args:
-            other: Another instance of token usage to add.
+            other: Another usage instance.
 
         Returns:
-            A new TokenUsage instance representing the combined count.
+            Combined usage.
         """
         return TokenUsage(
             self.input_tokens + other.input_tokens,
@@ -60,7 +50,11 @@ class TokenUsage:
 
 
 def _collected_usage(handler: UsageMetadataCallbackHandler) -> TokenUsage:
-    """Sum the per-model usage a callback handler collected during one call."""
+    """Sum the per-model usage a callback handler collected during one call.
+
+    Returns:
+        Total token usage.
+    """
     total = TokenUsage()
     for meta in handler.usage_metadata.values():
         total += TokenUsage(int(meta.get("input_tokens", 0)), int(meta.get("output_tokens", 0)))
@@ -68,13 +62,27 @@ def _collected_usage(handler: UsageMetadataCallbackHandler) -> TokenUsage:
 
 
 def is_transient(exc: Exception) -> bool:
-    """True if ``exc`` looks like a retryable provider/rate error."""
+    """Check if an exception is retryable.
+
+    Args:
+        exc: The caught exception.
+
+    Returns:
+        True if error is transient.
+    """
     msg = str(exc).lower()
     return any(marker in msg for marker in TRANSIENT_MARKERS)
 
 
 def wrap_llm_error(exc: Exception) -> LLMError:
-    """Map a raw provider error to ``TransientExhausted`` or ``LLMError``."""
+    """Map a raw provider error to a domain-specific failure exception.
+
+    Args:
+        exc: The raw exception caught from the LLM provider.
+
+    Returns:
+        An instance of TransientExhausted or LLMError.
+    """
     if is_transient(exc):
         return TransientExhausted.after(LLM_RETRY.max_attempts, exc)
     return LLMError.api_failure(exc)
@@ -96,8 +104,11 @@ class TypedRunnable[T]:
     async def ainvoke(self, prompt: str) -> tuple[T, TokenUsage]:
         """Invoke the chain, retrying a schema-validation failure exactly once.
 
-        Returns the parsed value and the real token usage of every call made
-        (a retry is billed too). A second parse failure raises ``ParseFailed``.
+        Returns:
+            The parsed value and the accumulated token usage.
+
+        Raises:
+            ParseFailed: A second schema-validation error occurs after retry.
         """
         # One handler shared across both attempts so a parse-retry still bills the
         # discarded first call. Provider tokens are committed regardless of whether
@@ -113,7 +124,18 @@ class TypedRunnable[T]:
         return value, _collected_usage(handler)
 
     async def _call(self, prompt: str, handler: UsageMetadataCallbackHandler) -> T:
-        """One gated call recording usage into ``handler``. Parse errors propagate raw."""
+        """Execute a gated call and record usage into the provided handler.
+
+        Args:
+            prompt: The input text for the LLM chain.
+            handler: The usage tracking callback handler.
+
+        Returns:
+            The result of the invocation.
+
+        Raises:
+            LLMError: The provider reports an API failure.
+        """
         try:
             return await self.gate.execute(
                 lambda: self.chain.ainvoke(prompt, config={"callbacks": [handler]}),

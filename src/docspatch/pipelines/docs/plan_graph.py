@@ -1,8 +1,4 @@
-"""Plan graph: scan files, batch targets, estimate cost, confirm with the user.
-
-Runs once per invocation and is not checkpointed — planning is cheap and must
-re-scan the working tree each time.
-"""
+"""Define the state machine workflow for planning and batching documentation tasks."""
 
 from collections import defaultdict
 
@@ -18,7 +14,14 @@ from docspatch.utils.batcher import greedy_batches
 
 
 def build_plan_graph(ctx: GraphContext):  # noqa: ANN201
-    """Plan → batch → estimate → confirm → END."""
+    """Construct the state machine for planning, batching, estimating, and confirming documentation tasks.
+
+    Args:
+        ctx: Context containing repository and generation settings.
+
+    Returns:
+        The compiled state machine graph.
+    """
     g: StateGraph = StateGraph(PlanState)
     g.add_node("plan", make_plan(ctx))
     g.add_node("batch", make_batch(ctx))
@@ -34,7 +37,16 @@ def build_plan_graph(ctx: GraphContext):  # noqa: ANN201
 
 
 def batch_targets(ctx: GraphContext, targets: list[TargetRef], offset: int = 0) -> list[BatchRef]:
-    """Greedy-batch targets by token cost; batch ids start at ``offset``."""
+    """Partition targets into batches based on token costs, starting batch indexing from a given offset.
+
+    Args:
+        ctx: The context holding full target definitions.
+        targets: List of target functions to distribute.
+        offset: Initial ID for the first batch.
+
+    Returns:
+        A list of structured batch objects.
+    """
     if not targets:
         return []
 
@@ -46,13 +58,18 @@ def batch_targets(ctx: GraphContext, targets: list[TargetRef], offset: int = 0) 
 
 
 def make_plan(ctx: GraphContext):  # noqa: ANN201
-    """Scan files; populate target refs + the cached full-target lookup."""
+    """Scan files to identify functions needing documentation and prepare the target lookup table.
+
+    Args:
+        ctx: Context maintaining the target registry.
+
+    Returns:
+        The planning node function.
+    """
 
     def plan(state: PlanState) -> PlanState:
         with status("Scanning files..."):
-            result = collect_targets(
-                state["paths"], state["repo_root"], cache=ctx.cache, update=state["flags"].update
-            )
+            result = collect_targets(state["paths"], state["repo_root"], cache=ctx.cache, update=state["flags"].update)
         ctx.full_targets = {(t.rel, t.qualname): t for t in result.targets}
         refs = [TargetRef(rel=t.rel, qualname=t.qualname) for t in result.targets]
         return {"targets": refs, "cache_hits": result.cache_hits}
@@ -61,7 +78,14 @@ def make_plan(ctx: GraphContext):  # noqa: ANN201
 
 
 def make_batch(ctx: GraphContext):  # noqa: ANN201
-    """Greedy batch refs by token cost."""
+    """Organize identified targets into optimal generation batches.
+
+    Args:
+        ctx: Context providing token limits and target information.
+
+    Returns:
+        The batching node function.
+    """
 
     def batch(state: PlanState) -> PlanState:
         return {"batches": batch_targets(ctx, state["targets"])}
@@ -70,7 +94,14 @@ def make_batch(ctx: GraphContext):  # noqa: ANN201
 
 
 def make_estimate(ctx: GraphContext):  # noqa: ANN201
-    """Render cost panel grouped by file."""
+    """Calculate and display the projected token usage and costs for the generated documentation run.
+
+    Args:
+        ctx: Context holding pricing and model configuration.
+
+    Returns:
+        The estimation node function.
+    """
 
     def estimate(state: PlanState) -> PlanState:
         targets = state["targets"]
@@ -115,7 +146,14 @@ def make_estimate(ctx: GraphContext):  # noqa: ANN201
 
 
 def make_confirm(ctx: GraphContext):  # noqa: ANN201
-    """User confirm gate. Skips when ``confirmed`` already set (resume)."""
+    """Prompt the user for approval to proceed with generation, unless explicitly bypassed or resuming an existing run.
+
+    Args:
+        ctx: Context providing interaction and automation flags.
+
+    Returns:
+        The confirmation node function.
+    """
 
     def confirm(state: PlanState) -> PlanState:
         if state.get("confirmed"):

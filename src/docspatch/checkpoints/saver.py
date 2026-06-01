@@ -1,10 +1,4 @@
-"""Opening the docs checkpoint saver with the right serializer.
-
-Every saver must carry the shared serializer so the custom Pydantic/dataclass
-values that travel through graph state are msgpack-allowed; without it langgraph
-logs an "unregistered type" warning on every checkpoint read. ``open_checkpoint_saver``
-makes that wiring non-optional — a saver cannot be opened here without it.
-"""
+"""Configuration and setup for checkpoint persistence."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -27,21 +21,35 @@ ALLOWED_STATE_TYPES = [
 
 
 def make_serde() -> JsonPlusSerializer:
-    """Return the serializer shared by all checkpoint savers."""
+    """Construct the serializer used for checkpoint objects.
+
+    Returns:
+        JsonPlusSerializer instance.
+    """
     return JsonPlusSerializer(allowed_msgpack_modules=ALLOWED_STATE_TYPES)
 
 
 def docs_db_path(repo_root: Path) -> Path:
-    """Canonical sqlite checkpoint path for a repo (shared by docs, scout, review)."""
+    """Get the filesystem path for the shared SQLite checkpoint store.
+
+    Args:
+        repo_root: Repository base directory.
+
+    Returns:
+        Database path.
+    """
     return repo_root / ".docspatch" / "checkpoints" / "docs.sqlite"
 
 
 @asynccontextmanager
 async def open_checkpoint_saver(db_path: Path) -> AsyncIterator[AsyncSqliteSaver]:
-    """Open the sqlite checkpointer at ``db_path`` with the shared serializer wired in.
+    """Open the SQLite checkpoint store as an asynchronous resource.
 
-    Creates the parent directory. The serializer is non-optional: a saver opened
-    any other way mis-deserializes checkpointed Pydantic state.
+    Args:
+        db_path: Path to the SQLite database file.
+
+    Returns:
+        An async iterator for the saver instance.
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:

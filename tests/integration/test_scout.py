@@ -26,10 +26,7 @@ def make_llm_client(summary: str = "does stuff") -> MagicMock:
 
     async def fake_ainvoke(prompt: str) -> tuple[BatchSummaryOutput, TokenUsage]:
         paths = PATH_HEADER.findall(prompt)
-        files = {
-            p: FileSummaryOutput(summary=summary, function_summaries={"foo": "returns 1"})
-            for p in paths
-        }
+        files = {p: FileSummaryOutput(summary=summary, function_summaries={"foo": "returns 1"}) for p in paths}
         return BatchSummaryOutput(files=files), SCOUT_USAGE
 
     chain.ainvoke = AsyncMock(side_effect=fake_ainvoke)

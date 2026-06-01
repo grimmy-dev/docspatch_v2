@@ -1,4 +1,4 @@
-"""Batch docstring generator: one LLM call per batch, with anti-LLM-ese retries."""
+"""Provide protocols and concrete implementations for automated docstring generation using LLMs."""
 
 from typing import Protocol
 
@@ -8,10 +8,11 @@ from docspatch.pipelines.docs.prompts import (
     build_batch_docstring_prompt,
     contains_banned_phrase,
 )
+from docspatch.pipelines.docs.render import render_google_docstring
 from docspatch.schemas import BatchDocstringOutput
 
-BANNED_RETRY_LIMIT = 2
-"""Max silent retries per key when a banned phrase is detected."""
+RETRY_LIMIT = 2
+"""Max silent retries for keys the model omitted or filled with a banned phrase."""
 
 
 class DocstringGenerator(Protocol):
@@ -23,10 +24,16 @@ class DocstringGenerator(Protocol):
 
     remarks: str | None
 
-    async def generate_batch(
-        self, items: list[DocstringItem], tone: str
-    ) -> tuple[dict[str, str], TokenUsage]:
-        """Return ``({id: docstring}, usage)`` for ``items``."""
+    async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
+        """Return a mapping of identifiers to generated docstrings along with total token usage.
+
+        Args:
+            items: List of docstring tasks to perform.
+            tone: Style guide instructions for the output.
+
+        Returns:
+            Pair containing a map of IDs to text and the token consumption metrics.
+        """
         ...
 
 
@@ -39,41 +46,39 @@ class LLMDocstringGenerator:
     """
 
     def __init__(self, client: LLMClient, remarks: str | None = None) -> None:
-        """Initialize the generator with an LLM client and optional instructions.
+        """Initialize a generator instance with a provided language model client.
 
         Args:
-            client: The LLM client to execute generation.
-            remarks: Optional supplemental instructions for the model.
+            client: LLM client instance for generating documentation strings.
+            remarks: Optional custom instructions to guide the model behavior.
         """
         self.chain = client.with_structured_output(BatchDocstringOutput)
         self.remarks = remarks
 
-    async def generate_batch(
-        self, items: list[DocstringItem], tone: str
-    ) -> tuple[dict[str, str], TokenUsage]:
-        """Return ``({id: docstring}, usage)`` for ``items``.
+    async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
+        """Generate rendered docstrings for items, retrying omitted or banned-phrase keys.
 
-        Performs up to ``BANNED_RETRY_LIMIT`` extra calls covering only the keys
-        whose docstring tripped the banned-phrase filter. ``usage`` sums the real
-        tokens of every call, retries included.
+        Args:
+            items: The list of items requiring docstrings.
+            tone: The requested tone for the generated text.
+
+        Returns:
+            A mapping of id to rendered Google-style docstring text and the total token usage.
         """
-        result, usage = await self.chain.ainvoke(
-            build_batch_docstring_prompt(items, tone, self.remarks)
-        )
-        accumulated: dict[str, str] = dict(result.docstrings)
         by_key = {item.key: item for item in items}
+        result, usage = await self.chain.ainvoke(build_batch_docstring_prompt(items, tone, self.remarks))
+        rendered = {k: render_google_docstring(v) for k, v in result.docstrings.items()}
 
-        for _ in range(BANNED_RETRY_LIMIT):
-            offending_keys = [k for k, v in accumulated.items() if contains_banned_phrase(v)]
-            if not offending_keys:
-                break
-            retry_items = [by_key[k] for k in offending_keys if k in by_key]
+        # Bounded — a model that keeps omitting a key or repeating a banned phrase
+        # exits at the cap; the key stays absent and lands in the review queue.
+        for _ in range(RETRY_LIMIT):
+            missing = [k for k in by_key if k not in rendered]
+            banned = [k for k, v in rendered.items() if contains_banned_phrase(v)]
+            retry_items = [by_key[k] for k in {*missing, *banned} if k in by_key]
             if not retry_items:
                 break
-            retry_result, retry_usage = await self.chain.ainvoke(
-                build_batch_docstring_prompt(retry_items, tone, self.remarks)
-            )
+            retry_result, retry_usage = await self.chain.ainvoke(build_batch_docstring_prompt(retry_items, tone, self.remarks))
             usage += retry_usage
             for key, value in retry_result.docstrings.items():
-                accumulated[key] = value
-        return accumulated, usage
+                rendered[key] = render_google_docstring(value)
+        return rendered, usage

@@ -123,9 +123,7 @@ def test_fresh_run_has_no_remarks(tmp_path: Path) -> None:
     assert generator.remarks is None
 
 
-def test_resume_restores_remarks_from_checkpoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resume_restores_remarks_from_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import docspatch.pipelines.docs.commit as commit_mod
 
     src = tmp_path / "m.py"
@@ -153,9 +151,7 @@ def test_resume_restores_remarks_from_checkpoint(
     assert healthy.remarks == "Use British spelling."
 
 
-def test_list_incomplete_runs_finds_a_killed_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_list_incomplete_runs_finds_a_killed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import docspatch.pipelines.docs.commit as commit_mod
     from docspatch.checkpoints.runs import list_incomplete_runs
 
@@ -174,9 +170,7 @@ def test_list_incomplete_runs_finds_a_killed_run(
     assert asyncio.run(list_incomplete_runs(tmp_path)) == [run_id]
 
 
-def test_summary_panel_reports_real_tokens(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_summary_panel_reports_real_tokens(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     src = tmp_path / "m.py"
     src.write_text("def f():\n    return 1\n")
 
@@ -189,7 +183,7 @@ def test_summary_panel_reports_real_tokens(
 
 def test_fully_documented_file_is_noop(tmp_path: Path) -> None:
     src = tmp_path / "sample.py"
-    original = 'def add(a: int, b: int) -> int:\n    """Add two numbers."""\n    return a + b\n'
+    original = '"""Module."""\n\n\ndef add(a: int, b: int) -> int:\n    """Add two numbers."""\n    return a + b\n'
     src.write_text(original)
 
     generator = FakeGenerator()
@@ -257,7 +251,7 @@ def test_undocumented_function_gains_docstring(tmp_path: Path) -> None:
 
 def test_handles_many_functions_per_file(tmp_path: Path) -> None:
     src = tmp_path / "many.py"
-    src.write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n")
+    src.write_text('"""Module."""\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n')
     generator = FakeGenerator(docstring="doc.")
 
     result = go([src], generator, tmp_path=tmp_path)
@@ -271,7 +265,7 @@ def test_handles_many_functions_per_file(tmp_path: Path) -> None:
 def test_one_llm_call_per_batch(tmp_path: Path) -> None:
     """Bundle all 3 fns into a single LLM call (scout-style batching)."""
     src = tmp_path / "many.py"
-    src.write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n")
+    src.write_text('"""Module."""\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n')
     gen = FakeGenerator(docstring="d.")
 
     go([src], gen, tmp_path=tmp_path)
@@ -306,6 +300,7 @@ def test_respects_concurrency_limit(tmp_path: Path) -> None:
 
     class TrackingGenerator:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.in_flight = 0
             self.peak = 0
@@ -353,7 +348,7 @@ def test_skips_cache_hits(tmp_path: Path) -> None:
 def test_writes_each_file_once(tmp_path: Path) -> None:
     """Per-file single libcst pass: each fn inserted in one atomic write."""
     src = tmp_path / "two.py"
-    src.write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n")
+    src.write_text('"""Module."""\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n')
 
     go([src], FakeGenerator(docstring="d."), tmp_path=tmp_path)
 
@@ -413,11 +408,12 @@ def test_partial_generation_persists_completed_batches(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def x():\n    return 1\n")
-    (pkg / "b.py").write_text("def y():\n    return 2\n")
+    (pkg / "a.py").write_text('"""Module."""\n\n\ndef x():\n    return 1\n')
+    (pkg / "b.py").write_text('"""Module."""\n\n\ndef y():\n    return 2\n')
 
     class Halfway:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.calls = 0
 
@@ -453,11 +449,12 @@ def test_resume_skips_completed_batches(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def x():\n    return 1\n")
-    (pkg / "b.py").write_text("def y():\n    return 2\n")
+    (pkg / "a.py").write_text('"""Module."""\n\n\ndef x():\n    return 1\n')
+    (pkg / "b.py").write_text('"""Module."""\n\n\ndef y():\n    return 2\n')
 
     class Halfway:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
 
@@ -527,6 +524,7 @@ def test_switch_handler_resumes_after_transient_exhausted(tmp_path: Path) -> Non
 
     class Exhausted:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise TransientExhausted.after(3, RuntimeError("rate_limit"))
 
@@ -566,6 +564,7 @@ def test_switch_handler_decline_returns_partial(tmp_path: Path) -> None:
 
     class Exhausted:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise TransientExhausted.after(3, RuntimeError("429"))
 
@@ -597,12 +596,13 @@ def test_completed_batches_not_reissued_after_switch(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def x():\n    return 1\n")
-    (pkg / "b.py").write_text("def y():\n    return 2\n")
-    (pkg / "c.py").write_text("def z():\n    return 3\n")
+    (pkg / "a.py").write_text('"""Module."""\n\n\ndef x():\n    return 1\n')
+    (pkg / "b.py").write_text('"""Module."""\n\n\ndef y():\n    return 2\n')
+    (pkg / "c.py").write_text('"""Module."""\n\n\ndef z():\n    return 3\n')
 
     class FirstOkRestExhausted:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.calls = 0
 
@@ -658,8 +658,8 @@ def test_reviewer_reject_skips_that_function_only(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def x():\n    return 1\n")
-    (pkg / "b.py").write_text("def y():\n    return 2\n")
+    (pkg / "a.py").write_text('"""Module."""\n\n\ndef x():\n    return 1\n')
+    (pkg / "b.py").write_text('"""Module."""\n\n\ndef y():\n    return 2\n')
 
     def handler(payload: dict) -> dict:
         ids = _ids(payload)
@@ -715,7 +715,7 @@ def test_reviewer_abort_writes_nothing(tmp_path: Path) -> None:
 
 def test_reviewer_accept_all_writes_everything(tmp_path: Path) -> None:
     src = tmp_path / "m.py"
-    src.write_text("def x():\n    return 1\n\n\ndef y():\n    return 2\n")
+    src.write_text('"""Module."""\n\n\ndef x():\n    return 1\n\n\ndef y():\n    return 2\n')
 
     result = asyncio.run(
         run_docs(
@@ -771,6 +771,7 @@ def test_cancelled_mid_wave_invokes_switch_handler(tmp_path: Path) -> None:
 
     class Cancelling:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise asyncio.CancelledError
 
@@ -815,7 +816,7 @@ class TrackingGen:
 def test_rerun_regenerates_with_feedback_then_accepts(tmp_path: Path) -> None:
     """Review queues fn for rerun → generator re-invoked with feedback → second review accepts."""
     src = tmp_path / "m.py"
-    src.write_text("def f():\n    return 1\n")
+    src.write_text('"""Module."""\n\n\ndef f():\n    return 1\n')
 
     gen = TrackingGen(responses=["initial.", "improved."])
     seen: list[bool] = []
@@ -889,6 +890,7 @@ def test_rerun_keeps_accepted_and_regenerates_only_rerun(tmp_path: Path) -> None
 
     class KeyedGen:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.call = 0
 
@@ -939,7 +941,7 @@ def test_rerun_keeps_accepted_and_regenerates_only_rerun(tmp_path: Path) -> None
 def test_rerun_feedback_accumulates_across_rounds(tmp_path: Path) -> None:
     """Second rerun's prompt receives both feedback strings (oldest first)."""
     src = tmp_path / "m.py"
-    src.write_text("def f():\n    return 1\n")
+    src.write_text('"""Module."""\n\n\ndef f():\n    return 1\n')
 
     gen = TrackingGen(responses=["v1.", "v2.", "v3."])
     round_n = [0]
@@ -1098,9 +1100,7 @@ def test_commit_hash_mismatch_abort_reports_error(tmp_path: Path) -> None:
     assert src.read_text() == original
 
 
-def test_commit_rolls_back_committed_files_on_write_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_commit_rolls_back_committed_files_on_write_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A libcst failure on file N restores files 1..N-1 from their snapshots."""
     import docspatch.pipelines.docs.commit as commit_mod
 
@@ -1127,9 +1127,7 @@ def test_commit_rolls_back_committed_files_on_write_failure(
     assert not list(checkpoints.glob("originals-*"))
 
 
-def test_commit_resumes_at_next_uncommitted_file_after_kill(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_commit_resumes_at_next_uncommitted_file_after_kill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A hard kill mid-commit leaves a journal; the rerun finishes the rest, no LLM re-call."""
     import docspatch.pipelines.docs.commit as commit_mod
 
@@ -1214,6 +1212,7 @@ def test_hanging_call_times_out_and_switch_recovers(tmp_path: Path) -> None:
 
     class HangingGenerator:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             await asyncio.sleep(30)  # never returns within call_timeout
             return {}, FAKE_USAGE
@@ -1252,6 +1251,7 @@ def test_hanging_call_without_switch_raises(tmp_path: Path) -> None:
 
     class HangingGenerator:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             await asyncio.sleep(30)
             return {}, FAKE_USAGE

@@ -1,10 +1,4 @@
-"""Commit node: write reviewed docstrings to disk transactionally.
-
-Per file: re-check the on-disk hash against the cache, snapshot the original,
-insert the docstrings, append to a journal. A failure part-way through
-restores every file already written from its snapshot. A clean run deletes
-the journal and snapshots; an interrupted run resumes from the journal.
-"""
+"""Implement the commit phase to apply docstring updates to repository source files."""
 
 import ast
 import gzip
@@ -41,7 +35,7 @@ class CommitJournal:
 
         Args:
             checkpoint_dir: The directory used for storing run state.
-            run_id: A unique ID for the current batch process.
+            run_id: A unique identifier for the current batch process.
         """
         self.path = checkpoint_dir / f"commit-{run_id}.journal"
         # Load once; mutate on append. Membership is O(1) and rollback keeps order.
@@ -49,15 +43,31 @@ class CommitJournal:
         self._set: set[str] = set(self._order)
 
     def committed_order(self) -> list[str]:
-        """Repo-relative paths recorded so far, in commit order. Used for rollback restore."""
+        """Retrieve the repository-relative paths recorded so far, in commit order.
+
+        Returns:
+            The list of committed paths.
+        """
         return list(self._order)
 
     def is_committed(self, rel: str) -> bool:
-        """True when ``rel`` has already been journalled in this run."""
+        """Determine if a file has already been journalled in the current run.
+
+        Args:
+            rel: The relative file path.
+
+        Returns:
+            True if the file is committed.
+        """
         return rel in self._set
 
     def append(self, rel: str, file_hash_after: str) -> None:
-        """Record one committed file."""
+        """Record a single committed file to the journal.
+
+        Args:
+            rel: The relative file path.
+            file_hash_after: The hash of the file after document insertion.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         record = {"rel": rel, "ts": time.time(), "file_hash_after": file_hash_after}
         with self.path.open("a", encoding="utf-8") as fh:
@@ -73,10 +83,13 @@ class CommitJournal:
 
 
 def _read_journal(path: Path) -> list[str]:
-    """Repo-relative paths from an existing journal in commit order.
+    """Load the list of committed file paths from an existing journal file.
 
-    Skips malformed lines silently so a partial write from a hard crash does
-    not block the resume.
+    Args:
+        path: The file system path to the journal.
+
+    Returns:
+        A list of paths in order.
     """
     if not path.exists():
         return []
@@ -86,7 +99,7 @@ def _read_journal(path: Path) -> list[str]:
             continue
         try:
             rels.append(json.loads(line)["rel"])
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except json.JSONDecodeError, KeyError, TypeError:
             continue
     return rels
 
@@ -95,32 +108,39 @@ def _snapshot_file(snapshot_dir: Path, rel: str) -> Path:
     """Construct the path for a gzipped snapshot file.
 
     Args:
-        snapshot_dir: The directory to store snapshots.
+        snapshot_dir: The directory containing snapshots.
         rel: The relative path identifier.
 
     Returns:
-        A path object pointing to the specific snapshot.
+        The Path object to the snapshot.
     """
     return snapshot_dir / f"{rel}.gz"
 
 
 def write_snapshot(snapshot_dir: Path, rel: str, content: str) -> None:
-    """Gzip the original file content before it is overwritten."""
+    """Gzip and save the original file content before it is overwritten."""
     path = _snapshot_file(snapshot_dir, rel)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(gzip.compress(content.encode("utf-8")))
 
 
 def read_snapshot(snapshot_dir: Path, rel: str) -> str:
-    """Read back a snapshotted original."""
+    """Decompress and return the original file content from a snapshot.
+
+    Returns:
+        The original file text.
+    """
     return gzip.decompress(_snapshot_file(snapshot_dir, rel).read_bytes()).decode("utf-8")
 
 
 def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is GraphContext
-    """Write every accepted docstring to disk. The docs graph's commit node.
+    """Apply accepted docstrings to the repository source files.
 
-    Returns ``committed_files`` + ``skipped_files`` on success, or
-    ``commit_error`` after rolling back when a write fails mid-sweep.
+    Returns:
+        A dictionary reporting committed files, skipped files, or errors.
+
+    Raises:
+        Exception: An error occurs during file writing, triggering a rollback.
     """
     accepted = set(state.get("accepted", []))
     entries = [e for e in state.get("entries", []) if f"{e.rel}::{e.qualname}" in accepted]
@@ -198,7 +218,11 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
 
 
 def _conflict(ctx, rel: str, source: str) -> bool:  # noqa: ANN001
-    """True when the on-disk file no longer matches the hash the cache recorded."""
+    """Detect if the on-disk file content differs from the recorded cache hash.
+
+    Returns:
+        True if a conflict exists.
+    """
     if ctx.cache is None:
         return False
     cached = ctx.cache.get(rel)
@@ -206,7 +230,11 @@ def _conflict(ctx, rel: str, source: str) -> bool:  # noqa: ANN001
 
 
 def _resolve_conflict(ctx, rel: str) -> str:  # noqa: ANN001
-    """Ask the user how to handle a concurrently-edited file: skip / force / abort."""
+    """Determine the resolution action for a concurrently modified file.
+
+    Returns:
+        The selected resolution action as a string.
+    """
     if not ctx.interactive:
         console.print(f"[yellow]⚠ skipped {rel} — file changed on disk[/yellow]")
         return "skip"
@@ -220,13 +248,7 @@ def _rollback(  # noqa: ANN001
     snapshot_dir: Path,
     cache_snapshots: dict[str, FileDocState | None],
 ) -> None:
-    """Restore every journalled file from its snapshot and revert the docs cache.
-
-    Disk and cache must stay in lockstep: if disk goes back to the pre-commit
-    content, the cache entry must follow. Otherwise the next run sees a cache
-    that recorded the post-insert hash for content that no longer matches and
-    flags every rolled-back file as edited-on-disk.
-    """
+    """Restore files and cache entries to the state prior to the current commit sweep."""
     for rel in journal.committed_order():
         atomic_write(ctx.repo_root / rel, read_snapshot(snapshot_dir, rel))
         if ctx.cache is not None and rel in cache_snapshots:
@@ -244,9 +266,10 @@ def _functions_after_insert(
     inserts: list[DocstringInsert],
     new_source: str,
 ) -> dict[str, FunctionDocState]:
-    """Function state after inserting ``inserts``. Mutates prior cache (hashes
-    exclude docstrings, so only ``has_docstring`` flips). Re-scans on cache
-    miss or unknown qualname.
+    """Calculate function states following docstring insertions.
+
+    Returns:
+        A dictionary mapping qualnames to FunctionDocState.
     """
     if prior is None:
         return scan_functions(new_source)

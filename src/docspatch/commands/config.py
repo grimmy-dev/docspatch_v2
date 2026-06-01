@@ -1,4 +1,4 @@
-"""``dp config`` — show merged config + set/unset individual keys."""
+"""Provide commands for viewing and updating repository-level configuration."""
 
 import dataclasses
 
@@ -11,12 +11,16 @@ log = get_logger("config")
 
 
 def current_store() -> ConfigStore:
-    """Canonical ConfigStore for the running command. Test override hook."""
+    """Retrieve the canonical configuration store for the current runtime context.
+
+    Returns:
+        Config store instance.
+    """
     return default_store()
 
 
 def run() -> None:
-    """Display the current merged configuration settings in a tabular format."""
+    """Display all merged configuration settings in a formatted table."""
     s = current_store()
     cfg = load_config(global_path=s.global_path, repo_path=s.repo_path)
     rows = [
@@ -28,7 +32,12 @@ def run() -> None:
 
 
 def run_set(key: str, value: str) -> None:
-    """Set a single config key. Scope is inferred from the key."""
+    """Update a specific configuration value.
+
+    Args:
+        key: Config key name.
+        value: Config value to set.
+    """
     log.debug("setting config key: %s", key)  # value omitted — may be a secret
     written = current_store().set(key, value)
     console.print(f"[green]✓[/green] {written.key} = {display_value(written.key, written.value)} ({written.scope})")

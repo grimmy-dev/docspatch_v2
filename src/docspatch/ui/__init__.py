@@ -1,8 +1,4 @@
-"""Reusable rich-based UI primitives.
-
-Commands and pipeline nodes import from here only — never `rich` directly —
-so layout, spinner, and progress changes land in one place.
-"""
+"""Expose the UI components for user interaction and status reporting."""
 
 from docspatch.ui.console import console, err_console, status
 from docspatch.ui.panels import cost_panel, kv_panel, warning_panel

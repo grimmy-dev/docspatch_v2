@@ -1,10 +1,4 @@
-"""Interactive review of generated docstrings before they are committed.
-
-Pure UI: the docs graph pauses on an ``interrupt`` and hands the serialized
-entries here; ``review_session`` renders the panels, collects the user's
-accept / reject / rerun verdict, and returns it as a plain dict the graph
-resumes with. No graph or pipeline imports — the seam stays one-directional.
-"""
+"""Manage the interactive review session for generated docstrings."""
 
 import ast
 from dataclasses import dataclass, field
@@ -32,11 +26,19 @@ NAME_TRUNC = 22
 
 
 def short_path(rel: str) -> str:
-    """Return ``parent/file`` for display."""
+    """Return parent directory and filename for UI display.
+
+    Args:
+        rel: Full path string.
+
+    Returns:
+        Formatted short path string.
+    """
     parts = rel.replace("\\", "/").split("/")
     if len(parts) <= 1:
         return rel
     return f"{parts[-2]}/{parts[-1]}"
+
 
 EXPLORER_MIN_LINES = 8
 EXPLORER_MAX_LINES = 30
@@ -72,7 +74,11 @@ class ReviewEntry:
 
     @property
     def id(self) -> str:
-        """Generate a unique identifier for the review entry."""
+        """Generate a unique identifier for the review entry.
+
+        Returns:
+            Identifier string formed by relative path and qualified name.
+        """
         return f"{self.rel}::{self.qualname}"
 
 
@@ -87,7 +93,11 @@ class Choice:
     aborted: bool = False
 
     def as_dict(self) -> dict:
-        """Export the choice attributes as a dictionary."""
+        """Export the choice attributes as a dictionary.
+
+        Returns:
+            Dictionary representation of choices.
+        """
         return {
             "accepted": self.accepted,
             "rejected": self.rejected,
@@ -103,7 +113,15 @@ CONFLICT_ABORT = "abort"
 
 
 def prompt_conflict(prompter: Prompter, file: str) -> dict:
-    """Ask how to handle a file edited on disk since planning: skip / force / abort."""
+    """Query how to handle a file modified on disk since the run began.
+
+    Args:
+        prompter: Interface for user input.
+        file: Relative path of the conflicting file.
+
+    Returns:
+        Dictionary containing the user's selected action.
+    """
     console.print(f"[yellow]⚠ {file} changed on disk since the run started.[/yellow]")
     choices = {
         "Skip this file": CONFLICT_SKIP,
@@ -129,13 +147,16 @@ def review_session(
     prompter: Prompter,
     allow_rerun: bool,
 ) -> dict:
-    """Render the review UI for one interrupt payload and return the choice dict.
+    """Render the review interface and process user choices.
 
     Args:
-        entries: Serialized docstrings (``rel``, ``qualname``, ``docstring``).
-        repo_root: Repo root, used to patch files for the preview.
-        prompter: Prompt backend.
-        allow_rerun: ``False`` once the rerun-round cap is reached — hides rerun.
+        entries: List of docstrings to review.
+        repo_root: Base directory for source files.
+        prompter: Interface for user input.
+        allow_rerun: Toggle visibility of the rerun option.
+
+    Returns:
+        Dictionary of accepted, rejected, and rerun decisions.
     """
     parsed = [
         ReviewEntry(
@@ -185,7 +206,17 @@ def run_review(
     prompter: Prompter,
     allow_rerun: bool,
 ) -> Choice:
-    """Drive the accept-all / per-item / abort flow over ``items``."""
+    """Drive the interaction loop for accepting, rejecting, or rerunning items.
+
+    Args:
+        items: List of reviewable entries.
+        render: Component for building UI elements.
+        prompter: Interface for user input.
+        allow_rerun: Toggle availability of rerun actions.
+
+    Returns:
+        Choice object containing final session decisions.
+    """
     accepted: dict[str, ReviewEntry] = {}
     rejected: dict[str, ReviewEntry] = {}
     rerun: dict[str, ReviewEntry] = {}
@@ -242,7 +273,17 @@ def run_review(
 
 
 def top_prompt(prompter: Prompter, *, total: int, remaining_count: int, reviewed_count: int) -> str:
-    """Render the top-level menu. First pass uses a clean count; later passes show remaining."""
+    """Render the main menu, displaying completion progress.
+
+    Args:
+        prompter: Interface for user input.
+        total: Total number of items.
+        remaining_count: Number of pending items.
+        reviewed_count: Number of already processed items.
+
+    Returns:
+        Selected action string.
+    """
     if reviewed_count == 0:
         header = f"{total} docstring(s) generated. Choose how to proceed:"
         accept_label = f"Accept all ({total})"
@@ -266,11 +307,15 @@ def walk_items(
     already_reviewed: int,
     allow_rerun: bool,
 ) -> bool:
-    """Walk one pass of unreviewed items.
+    """Iterate through remaining items for manual review.
+
+    Args:
+        remaining: Unreviewed items.
+        render: Component for building UI elements.
+        prompter: Interface for user input.
 
     Returns:
-        ``True`` when every item in ``remaining`` was decided, ``False`` when
-        the user chose to return to the top menu.
+        True if the user completed the set, False to return to menu.
     """
     for offset, item in enumerate(remaining, start=1):
         idx = already_reviewed + offset
@@ -294,7 +339,15 @@ def walk_items(
 
 
 def item_menu(item: ReviewEntry, *, allow_rerun: bool) -> dict[str, str]:
-    """Per-item action menu. A parse-failed entry has no acceptable docstring."""
+    """Construct the action menu for a specific item.
+
+    Args:
+        item: Reviewable item.
+        allow_rerun: Toggle rerun option.
+
+    Returns:
+        Mapping of action labels to identifiers.
+    """
     menu: dict[str, str] = {}
     if not item.parse_failed:
         menu["Accept"] = ITEM_ACCEPT
@@ -306,7 +359,12 @@ def item_menu(item: ReviewEntry, *, allow_rerun: bool) -> dict[str, str]:
 
 
 def print_summary(outcome: Choice, *, aborted: bool) -> None:
-    """Print accept/reject counts plus the rejected ids for an audit trail."""
+    """Output the final decision tallies and list rejected entries.
+
+    Args:
+        outcome: Collection of user decisions.
+        aborted: Status flag for completion.
+    """
     label = "Review aborted" if aborted else "Review complete"
     console.print(f"[bold]{label}.[/bold] Accepted {len(outcome.accepted)} · Rejected {len(outcome.rejected)}")
     if outcome.rejected:
@@ -324,12 +382,17 @@ def render_review_panel(
     siblings: list[str],
     console_width: int,
 ) -> RenderableType:
-    """Build the full review screen for one pending entry.
+    """Assemble the full screen layout for one review entry.
 
-    Layout: a thin status line above a single rounded table. The table header
-    holds ``EXPLORER`` on the left and a breadcrumb on the right. The single
-    body row pairs the file tree with the syntax preview. The sidebar drops out
-    when only one file is in scope or the terminal is too narrow.
+    Args:
+        entry: Current item.
+        preview: Syntax-highlighted code preview.
+        files: All files in scope.
+        siblings: Related items in current file.
+        console_width: Terminal dimensions.
+
+    Returns:
+        Renderable UI container.
     """
     status = build_status(entry=entry, ctx=ctx)
     breadcrumb = build_breadcrumb(entry=entry, siblings=siblings)
@@ -356,7 +419,11 @@ def render_review_panel(
 
 
 def build_status(*, entry: ReviewEntry, ctx: RenderCtx) -> Text:
-    """Thin status line above the box: progress + accept/reject counts."""
+    """Generate the status line displaying review progress and counts.
+
+    Returns:
+        Formatted progress text.
+    """
     return Text.assemble(
         ("Review ", "bold"),
         (f"{ctx.idx}/{ctx.total}", "bold cyan"),
@@ -372,7 +439,11 @@ def build_status(*, entry: ReviewEntry, ctx: RenderCtx) -> Text:
 
 
 def build_breadcrumb(*, entry: ReviewEntry, siblings: list[str]) -> Text:
-    """Header text for the main column: ``📁 dir / file › ◉ qualname (i/N)``."""
+    """Generate header text for the item context.
+
+    Returns:
+        Formatted breadcrumb text.
+    """
     try:
         in_file = siblings.index(entry.qualname) + 1
     except ValueError:
@@ -389,7 +460,14 @@ def build_breadcrumb(*, entry: ReviewEntry, siblings: list[str]) -> Text:
 
 
 def build_parse_fail_body(entry: ReviewEntry) -> RenderableType:
-    """Render banner + raw model output for an entry whose schema validation failed."""
+    """Create a display for entries that failed schema validation.
+
+    Args:
+        entry: Entry containing raw output.
+
+    Returns:
+        UI group with error message and raw output.
+    """
     raw = entry.raw_output or "(no model output captured)"
     return Group(
         Text("⚠ PARSE FAILED — model output did not match the docstring schema", style="bold red"),
@@ -400,7 +478,14 @@ def build_parse_fail_body(entry: ReviewEntry) -> RenderableType:
 
 
 def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Syntax:
-    """Syntax-highlighted signature + inserted docstring; head-slice when over max_lines."""
+    """Highlight the code snippet with the new docstring.
+
+    Args:
+        preview: Code object.
+
+    Returns:
+        Syntax-highlighted display component.
+    """
     raw = preview.code or "# (preview unavailable)"
     lines = raw.splitlines()
     if len(lines) > max_lines:
@@ -420,7 +505,15 @@ def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Syntax:
 
 
 def build_explorer(files: list[str], *, current: str, max_lines: int | None = None) -> Tree:
-    """Forward-biased file list: done collapses, current pinned, upcoming fills budget."""
+    """Create the sidebar tree for file navigation.
+
+    Args:
+        files: Ordered files list.
+        current: Currently selected file.
+
+    Returns:
+        Rich tree object.
+    """
     budget = max_lines if max_lines is not None else explorer_budget()
     try:
         idx = files.index(current)
@@ -449,11 +542,14 @@ def build_explorer(files: list[str], *, current: str, max_lines: int | None = No
 
 
 def _explorer_row(rel: str, *, is_current: bool) -> Text:
-    """Render a single row for the file explorer view.
+    """Format a single file row for the sidebar.
 
     Args:
-        rel: Relative path of the file.
-        is_current: Flag indicating if the file is the currently selected one.
+        rel: Relative path.
+        is_current: Toggle current status styling.
+
+    Returns:
+        Formatted text element.
     """
     shown = truncate(short_path(rel), NAME_TRUNC)
     if is_current:
@@ -462,20 +558,36 @@ def _explorer_row(rel: str, *, is_current: bool) -> Text:
 
 
 def explorer_budget() -> int:
-    """Total sidebar rows allowed, clamped to keep the action prompt visible."""
+    """Calculate allowed sidebar rows based on terminal height.
+
+    Returns:
+        Number of rows.
+    """
     _, height = terminal_size()
     return max(EXPLORER_MIN_LINES, min(EXPLORER_MAX_LINES, height - EXPLORER_RESERVED_LINES))
 
 
 def truncate(text: str, width: int) -> str:
-    """Truncate with a leading ellipsis so the filename tail stays readable."""
+    """Truncate text with a leading ellipsis.
+
+    Args:
+        text: Original string.
+        width: Maximum character count.
+
+    Returns:
+        Truncated string.
+    """
     if len(text) <= width:
         return text
     return "…" + text[-(width - 1) :]
 
 
 def files_and_siblings(entries: list[ReviewEntry]) -> tuple[list[str], dict[str, list[str]]]:
-    """Return the ordered unique file list plus per-file qualname list (spill order preserved)."""
+    """Organize entries into a list of files and mapping of items.
+
+    Returns:
+        Files list and a dictionary of item names per file.
+    """
     files: list[str] = []
     siblings: dict[str, list[str]] = {}
     for entry in entries:
@@ -487,7 +599,15 @@ def files_and_siblings(entries: list[ReviewEntry]) -> tuple[list[str], dict[str,
 
 
 def build_previews(entries: list[ReviewEntry], repo_root: Path) -> dict[tuple[str, str], Preview]:
-    """Patch each file once; extract the signature+docstring slice per entry."""
+    """Generate code previews for all valid entries.
+
+    Args:
+        entries: Review entries.
+        repo_root: Project base directory.
+
+    Returns:
+        Dictionary mapping identifiers to preview objects.
+    """
     by_file: dict[str, list[ReviewEntry]] = {}
     for entry in entries:
         if entry.parse_failed:  # no docstring to patch in
@@ -508,7 +628,15 @@ def build_previews(entries: list[ReviewEntry], repo_root: Path) -> dict[tuple[st
 
 
 def patch_file(source: str, entries: list[ReviewEntry]) -> str:
-    """Apply every pending docstring for one file in a single libcst pass."""
+    """Insert all pending docstrings into file source code.
+
+    Args:
+        source: File text content.
+        entries: Docstrings to apply.
+
+    Returns:
+        Patched source code string.
+    """
     inserts = [DocstringInsert(qualname=e.qualname, docstring=e.docstring) for e in entries]
     try:
         return insert_docstrings(source, items=inserts)
@@ -517,7 +645,15 @@ def patch_file(source: str, entries: list[ReviewEntry]) -> str:
 
 
 def extract_signature_and_docstring(patched_source: str, qualname: str) -> Preview | None:
-    """Slice ``patched_source`` to just the function header and its inserted docstring."""
+    """Extract a function signature and docstring from the patched source code.
+
+    Args:
+        patched_source: Full file source after patching.
+        qualname: Qualified function name.
+
+    Returns:
+        Preview object or None if the function cannot be resolved.
+    """
     try:
         tree = ast.parse(patched_source)
     except SyntaxError:
@@ -539,7 +675,11 @@ def extract_signature_and_docstring(patched_source: str, qualname: str) -> Previ
 
 
 def module_preview(tree: ast.Module, patched_source: str) -> Preview | None:
-    """Slice the patched source down to its module docstring."""
+    """Extract the module docstring from the source tree.
+
+    Returns:
+        Preview object or None if no docstring is present.
+    """
     if not tree.body or not is_docstring(tree.body[0]):
         return None
     end_line = tree.body[0].end_lineno or 1
@@ -548,7 +688,15 @@ def module_preview(tree: ast.Module, patched_source: str) -> Preview | None:
 
 
 def locate_function(tree: ast.AST, parts: list[str]) -> FunctionNode | None:
-    """Walk class/def nodes following ``parts`` to find the target function."""
+    """Locate an AST node by traversing a chain of names.
+
+    Args:
+        tree: Root module AST.
+        parts: List of qualification parts.
+
+    Returns:
+        Target function node or None.
+    """
     current: ast.AST = tree
     for i, name in enumerate(parts):
         target_is_leaf = i == len(parts) - 1
@@ -566,12 +714,23 @@ def locate_function(tree: ast.AST, parts: list[str]) -> FunctionNode | None:
 
 
 def signature_end(func: FunctionNode) -> int:
-    """Last line of the signature (or the line before the body starts)."""
+    """Determine the line number marking the end of a signature.
+
+    Returns:
+        Ending line integer.
+    """
     if func.body:
         return max(func.lineno, func.body[0].lineno - 1)
     return func.end_lineno or func.lineno
 
 
 def is_docstring(node: ast.AST) -> bool:
-    """True if ``node`` is a top-of-body string expression."""
+    """Verify if a node is a module-level or function-level docstring expression.
+
+    Args:
+        node: AST node.
+
+    Returns:
+        Boolean result.
+    """
     return isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)

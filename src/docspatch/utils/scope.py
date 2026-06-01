@@ -1,4 +1,4 @@
-"""Validate + expand CLI path arguments into a concrete ``.py`` file list."""
+"""Handle discovery, validation, and filtering of target files and directories."""
 
 from pathlib import Path
 
@@ -13,17 +13,19 @@ def discover_targets(
     *,
     no_ignore: bool = False,
 ) -> list[Path]:
-    """Validate ``paths`` and return resolved ``.py`` files.
+    """Validate paths and return resolved .py files.
 
-    Rules per path (fail fast): exists → inside repo → relative → ``.py``
-    (files only) → not ignored. Directories walk the filesystem for ``.py``
-    files; the ignore filter applies unless ``no_ignore``.
+    Args:
+        paths: List of filesystem paths to analyze.
+        repo_root: Root path of the repository.
+        ignore: Configured ignore patterns.
+        no_ignore: Whether to bypass ignore filters.
 
     Returns:
-        Deduplicated absolute paths in input order.
+        The deduplicated list of absolute file paths.
 
     Raises:
-        PathError: First failed rule with a specific hint.
+        PathError: A path does not exist, is outside the repo, is not a .py file, or is ignored.
     """
     if not paths:
         raise PathError.not_found("(no paths)")
@@ -49,7 +51,18 @@ def discover_targets(
 
 
 def ensure_relative(raw: Path, root: Path) -> str:
-    """Reject absolute paths; return the repo-relative POSIX string."""
+    """Reject absolute paths and return the repo-relative POSIX string.
+
+    Args:
+        raw: The input path to check.
+        root: The expected base directory.
+
+    Returns:
+        The relative path string.
+
+    Raises:
+        PathError: The path is absolute.
+    """
     if raw.is_absolute():
         try:
             rel = raw.resolve().relative_to(root)
@@ -60,13 +73,29 @@ def ensure_relative(raw: Path, root: Path) -> str:
 
 
 def ensure_exists(raw: Path, abs_path: Path) -> None:
-    """Raise ``not_found`` when ``abs_path`` is missing."""
+    """Raise not_found when abs_path is missing.
+
+    Args:
+        raw: Original input path.
+        abs_path: Resolved absolute path to verify.
+
+    Raises:
+        PathError: The path does not exist.
+    """
     if not abs_path.exists():
         raise PathError.not_found(str(raw))
 
 
 def ensure_inside_repo(abs_path: Path, root: Path) -> None:
-    """Raise ``outside_repo`` when ``abs_path`` is not under ``root``."""
+    """Raise outside_repo when abs_path is not under root.
+
+    Args:
+        abs_path: The path to verify.
+        root: The repository base directory.
+
+    Raises:
+        PathError: The path is outside the repository boundary.
+    """
     try:
         abs_path.relative_to(root)
     except ValueError as exc:
@@ -74,7 +103,17 @@ def ensure_inside_repo(abs_path: Path, root: Path) -> None:
 
 
 def validate_file(rel: str, abs_path: Path, ignore: DocsIgnore, no_ignore: bool) -> None:
-    """Apply rules for an explicit file argument."""
+    """Apply rules for an explicit file argument.
+
+    Args:
+        rel: The relative path string.
+        abs_path: The absolute path to check.
+        ignore: Ignore instance to check against.
+        no_ignore: Whether to ignore the ignore filters.
+
+    Raises:
+        PathError: The file is not a .py file or is explicitly ignored.
+    """
     if abs_path.suffix != ".py":
         raise PathError.not_python(rel)
     if not no_ignore and ignore.matches(rel):
@@ -82,7 +121,17 @@ def validate_file(rel: str, abs_path: Path, ignore: DocsIgnore, no_ignore: bool)
 
 
 def dir_files(rel: str, root: Path, ignore: DocsIgnore, no_ignore: bool) -> list[str]:
-    """``.py`` files under ``rel`` (recursive walk), minus ignored ones unless ``no_ignore``."""
+    """Find .py files under rel recursively, minus ignored ones unless no_ignore is set.
+
+    Args:
+        rel: Relative directory path.
+        root: Repository root path.
+        ignore: Ignore instance.
+        no_ignore: Whether to include ignored files.
+
+    Returns:
+        List of found relative paths.
+    """
     base = root if rel in {".", ""} else root / rel
     found = sorted(p.relative_to(root).as_posix() for p in base.rglob("*.py"))
     return found if no_ignore else ignore.filter(found)

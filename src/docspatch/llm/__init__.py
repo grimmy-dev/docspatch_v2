@@ -1,8 +1,4 @@
-"""LLM facade: catalogue, factory, client. Single import point for callers.
-
-Type narrowers (``as_provider`` / ``as_tier``) live in :mod:`docspatch.schemas`
-next to the literals they narrow — import them there.
-"""
+"""Initialize the LLM interface and provide public access to core modules."""
 
 from docspatch.llm.catalogue import TIER_CATALOGUE, TierInfo, resolve_tier_model, tier_for_model, tier_info
 from docspatch.llm.client import LLM_RETRY, LLMClient, is_transient, validate_api_key

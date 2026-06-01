@@ -1,4 +1,4 @@
-"""``dp init`` — interactive setup flow. Orchestration only."""
+"""Handle repository initialization and configuration setup."""
 
 from pathlib import Path
 
@@ -20,14 +20,13 @@ def run(
     reconfigure: bool = False,
     prompter: Prompter | None = None,
 ) -> None:
-    """Full ``dp init`` flow.
+    """Run the complete initialization flow.
 
     Args:
-        repo_root: Repository root. Defaults to cwd.
-        global_config_path: Override for ``~/.docspatch/config.toml``. Test seam.
-        reconfigure: Re-prompt every field even if already set. Per-provider api
-            keys remain on disk so switching providers does not lose stored keys.
-        prompter: Interactive prompter. Defaults to :class:`QuestionaryPrompter`.
+        repo_root: Path to the target repository.
+        global_config_path: Override for the global config file.
+        reconfigure: Force re-prompting of settings.
+        prompter: Interface for user interaction.
     """
     repo_root = repo_root or Path.cwd()
     p = prompter or QuestionaryPrompter()
@@ -47,14 +46,14 @@ def run(
 
 
 def resolve_store(repo_root: Path, global_config_path: Path | None) -> ConfigStore:
-    """Determine the appropriate configuration storage based on provided paths.
+    """Construct a configuration store based on local and global path inputs.
 
     Args:
-        repo_root: The path to the repository root.
-        global_config_path: Optional path to a custom global configuration file.
+        repo_root: Path to the repository root.
+        global_config_path: Custom location for global configuration.
 
     Returns:
-        A ConfigStore instance pointing to the relevant config files.
+        Configured store instance.
     """
     if global_config_path is None:
         return default_store(repo_root)

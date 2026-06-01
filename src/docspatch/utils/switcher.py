@@ -1,9 +1,4 @@
-"""Mid-run provider/model switch when a pipeline exhausts its retry budget.
-
-The switcher is provider-agnostic and pipeline-agnostic: any pipeline that
-catches :class:`TransientExhausted` can await :func:`offer_switch` to give
-the user a chance to swap providers/tiers without restarting the run.
-"""
+"""Manage mid-process model switching when rate limits or exhaustion occur."""
 
 from dataclasses import dataclass
 
@@ -31,10 +26,17 @@ async def offer_switch(
     current_model: str,
     retry_cb: OnRetry | None = None,
 ) -> SwitchResult | None:
-    """Prompt the user to switch provider/tier after exhaustion.
+    """Prompt user to switch provider or tier after exhaustion.
 
-    Returns the newly-built :class:`LLMClient` (already validated, persisted to
-    config) or ``None`` if the user chose to abort.
+    Args:
+        store: Config storage.
+        p: Prompter instance.
+        current_provider: The provider that failed.
+        current_model: The model that failed.
+        retry_cb: Optional retry callback.
+
+    Returns:
+        A new client and tier, or null if the user aborts.
     """
     console.print(f"[yellow]⚠[/yellow] Model {current_model} on {current_provider} exhausted its retry budget.")
 
@@ -67,7 +69,14 @@ async def offer_switch(
 
 
 def _tier_choices(provider: str) -> dict[str, str]:
-    """Build a label→tier mapping for the tier picker (mirrors selection.ask_tier)."""
+    """Build a label-to-tier mapping for the tier picker.
+
+    Args:
+        provider: Provider name to get tiers for.
+
+    Returns:
+        Dictionary mapping displayed labels to internal tier names.
+    """
     tiers = TIER_CATALOGUE[as_provider(provider)]
     name_width = max(len(t.tier) for t in tiers)
     model_width = max(len(t.model) for t in tiers)

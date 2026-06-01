@@ -1,4 +1,4 @@
-"""Tier × model × price catalogue. Single source of truth for what each provider offers."""
+"""Define and resolve available LLM tiers and their model pricing."""
 
 from dataclasses import dataclass
 
@@ -35,7 +35,18 @@ TIER_CATALOGUE: dict[Provider, list[TierInfo]] = {
 
 
 def tier_info(provider: str, tier: str) -> TierInfo:
-    """Look up a :class:`TierInfo` or raise :class:`ConfigError` on unknown pair."""
+    """Fetch technical details for a specific provider and tier.
+
+    Args:
+        provider: Target LLM provider.
+        tier: Target performance tier.
+
+    Returns:
+        Tier information object.
+
+    Raises:
+        ConfigError: The pairing is unrecognized.
+    """
     p, t = as_provider(provider), as_tier(tier)
     for entry in TIER_CATALOGUE[p]:
         if entry.tier == t:
@@ -44,15 +55,30 @@ def tier_info(provider: str, tier: str) -> TierInfo:
 
 
 def resolve_tier_model(provider: str, tier: str) -> str:
-    """Return the model string for ``(provider, tier)``."""
+    """Map a provider and tier combination to its corresponding model identifier.
+
+    Args:
+        provider: Target provider.
+        tier: Target tier.
+
+    Returns:
+        Model identifier string.
+    """
     return tier_info(provider, tier).model
 
 
 def tier_for_model(provider: str, model: str) -> Tier:
-    """Reverse-lookup the tier that owns ``model`` under ``provider``.
+    """Identify the performance tier associated with a specific model and provider.
+
+    Args:
+        provider: Target provider.
+        model: Target model identifier.
+
+    Returns:
+        Tier name.
 
     Raises:
-        ConfigError: When ``model`` is not in the catalogue for ``provider``.
+        ConfigError: The model is unknown.
     """
     p = as_provider(provider)
     for entry in TIER_CATALOGUE[p]:

@@ -61,7 +61,7 @@ def test_rejects_resume_with_paths(fake_repo: Path) -> None:
 
 # --- `--check` preview ---
 
-DOCUMENTED = 'def f():\n    """Does a thing."""\n    return 1\n'
+DOCUMENTED = '"""Module."""\n\n\ndef f():\n    """Does a thing."""\n    return 1\n'
 UNDOCUMENTED = "def f():\n    return 1\n"
 
 

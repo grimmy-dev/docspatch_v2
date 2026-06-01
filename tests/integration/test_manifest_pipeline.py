@@ -18,9 +18,7 @@ class FakeGenerator:
     def __init__(self, docstring: str = "Doc.") -> None:
         self.canned = docstring
 
-    async def generate_batch(
-        self, items: list[DocstringItem], tone: str
-    ) -> tuple[dict[str, str], TokenUsage]:
+    async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
         return {i.key: self.canned for i in items}, FAKE_USAGE
 
 

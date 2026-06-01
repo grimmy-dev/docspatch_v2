@@ -56,9 +56,7 @@ def test_lock_released_on_exception(tmp_path: Path) -> None:
     assert not lock_path(tmp_path).exists()
 
 
-def test_permission_error_on_pid_check_treats_lock_as_held(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_permission_error_on_pid_check_treats_lock_as_held(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A PID owned by another user (os.kill -> PermissionError) must not be stolen."""
     lock = lock_path(tmp_path)
     lock.parent.mkdir(parents=True, exist_ok=True)

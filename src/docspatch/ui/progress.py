@@ -1,4 +1,4 @@
-"""Determinate progress bar with status-line updates."""
+"""Enable interactive progress bars for long-running operations."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -17,31 +17,31 @@ class BarHandle:
     task: TaskID
 
     def __call__(self, message: str | None = None) -> None:
-        """Advance the progress bar or update the current status message.
-
-        Args:
-            message: Optional update for the task description.
-        """
+        """Advance the progress bar or update its description."""
         if message:
             self.bar.update(self.task, description=message)
         self.bar.advance(self.task)
 
     def set_status(self, text: str) -> None:
-        """Update description without advancing — for retry / pause notices."""
+        """Update the progress description without advancing progress."""
         self.bar.update(self.task, description=text)
 
     def pause(self) -> None:
-        """Stop the live render — call before showing a blocking prompt."""
+        """Stop the live progress bar output."""
         self.bar.stop()
 
     def resume(self) -> None:
-        """Restart the live render after a prompt completes."""
+        """Restart the live progress bar output."""
         self.bar.start()
 
 
 @contextmanager
 def progress_bar(total: int, description: str = "Working") -> Iterator[BarHandle]:
-    """Yield a :class:`BarHandle`. ``transient=True`` clears on exit."""
+    """Initialize a context-managed progress bar.
+
+    Returns:
+        A handle to control the progress bar.
+    """
     columns = (
         SpinnerColumn(),
         TextColumn("[bold]{task.description}"),

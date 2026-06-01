@@ -1,4 +1,5 @@
-"""Collect undocumented functions across files (cache-aware)."""
+"""Scan codebase for functions and modules requiring documentation.
+This module traverses files, parses ASTs, and calculates token costs for batch processing."""
 
 import ast
 from collections.abc import Iterable
@@ -7,7 +8,13 @@ from pathlib import Path
 from typing import NamedTuple
 
 from docspatch.cache import DocsCache
-from docspatch.source import MODULE_QUALNAME, FunctionNode, compress, scan_functions_in
+from docspatch.source import (
+    MODULE_QUALNAME,
+    FunctionNode,
+    compress,
+    extract_module_docstring,
+    scan_functions_in,
+)
 
 
 @dataclass(frozen=True)
@@ -22,7 +29,11 @@ class Target:
 
     @property
     def token_cost(self) -> int:
-        """1 token ≈ 4 chars of signature + body."""
+        """Compute the token size of the target based on its signature and body.
+
+        Returns:
+            Approximate token count.
+        """
         return (len(self.signature) + len(self.body)) // 4
 
 
@@ -33,15 +44,17 @@ class CollectResult(NamedTuple):
     cache_hits: int
 
 
-def collect_targets(
-    paths: Iterable[Path], repo_root: Path, cache: DocsCache | None = None, *, update: bool = False
-) -> CollectResult:
-    """Walk each file once and return every function (and module) needing a docstring.
+def collect_targets(paths: Iterable[Path], repo_root: Path, cache: DocsCache | None = None, *, update: bool = False) -> CollectResult:
+    """Gather functions and modules requiring docstrings while respecting cache state.
 
-    By default a function is skipped when it already has a docstring or its cached
-    hash still matches. ``update`` widens the scope to every function in range,
-    bypassing both checks, so existing docstrings are regenerated. ``cache_hits``
-    counts functions skipped solely because the cache was fresh.
+    Args:
+        paths: File paths to scan.
+        repo_root: Absolute path to the repository root.
+        cache: Persistent cache for skipping unmodified targets.
+        update: Force regeneration of all targets if true.
+
+    Returns:
+        Collection of targets and the number of cache-skipped functions.
     """
     out: list[Target] = []
     cache_hits = 0
@@ -73,21 +86,40 @@ def collect_targets(
         skip = set() if update else cached_skip_set(rel, tree, cache)
         cache_hits += len(skip)
         source_lines = source.splitlines()
-        walk_targets(
-            tree, source_lines, parents=[], file=abs_path, rel=rel, skip=skip, out=out, update=update
-        )
+        walk_targets(tree, source_lines, parents=[], file=abs_path, rel=rel, skip=skip, out=out, update=update)
     return CollectResult(out, cache_hits)
 
 
 def module_target(file: Path, rel: str, source: str, *, update: bool) -> Target | None:
-    """Module-docstring target. Module docstrings are (re)generated only under ``--update``."""
+    """Return a module-level target when its documentation is missing.
+
+    Args:
+        file: Absolute file path.
+        rel: Path relative to repository root.
+        source: Raw file content.
+        update: Include module regardless of existing documentation if true.
+
+    Returns:
+        The module target or null if documented.
+    """
     if not update:
-        return None
+        existing = extract_module_docstring(source)
+        if existing is not None and existing.strip():
+            return None
     return Target(file=file, rel=rel, qualname=MODULE_QUALNAME, signature=f"module {rel}", body=compress(source))
 
 
 def cached_skip_set(rel: str, tree: ast.AST, cache: DocsCache | None) -> set[str]:
-    """Qualnames already documented at current hash. Reuses the caller's parsed tree."""
+    """Retrieve identifiers for documented functions that match current file state.
+
+    Args:
+        rel: Path relative to repository root.
+        tree: Parsed AST for the file.
+        cache: Persistent documentation cache.
+
+    Returns:
+        Set of fully qualified function names to skip.
+    """
     if cache is None:
         return set()
     cached = cache.get(rel)
@@ -107,17 +139,24 @@ def walk_targets(
     out: list[Target],
     update: bool = False,
 ) -> None:
-    """Recurse the AST; emit each function needing a docstring as a ``Target``.
+    """Traverse the AST to identify documentable functions and append them to the target list.
 
-    ``update`` keeps functions that already have a docstring so they are regenerated.
+    Args:
+        node: AST node to inspect.
+        source_lines: Split lines of the source file.
+        parents: Ancestry stack for qualified name construction.
+        skip: Set of function names that require no action.
+        out: List to populate with detected targets.
     """
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.ClassDef):
             walk_targets(child, source_lines, [*parents, child.name], file, rel, skip, out, update)
             continue
         if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-            if not update and ast.get_docstring(child) is not None:
-                continue
+            if not update:
+                existing = ast.get_docstring(child)
+                if existing is not None and existing.strip():
+                    continue
             qualname = ".".join([*parents, child.name])
             if qualname in skip:
                 continue
@@ -133,14 +172,30 @@ def walk_targets(
 
 
 def signature_text(node: FunctionNode, source_lines: list[str]) -> str:
-    """Signature line(s) as written in the file."""
+    """Extract the signature lines for an AST node.
+
+    Args:
+        node: The function node to examine.
+        source_lines: Raw source lines of the file.
+
+    Returns:
+        Textual signature.
+    """
     start = node.lineno - 1
     body_start = node.body[0].lineno - 1 if node.body else node.lineno
     return "\n".join(source_lines[start:body_start])
 
 
 def body_text(node: FunctionNode, source_lines: list[str]) -> str:
-    """Raw body text as written in the file."""
+    """Extract the raw body text from an AST node.
+
+    Args:
+        node: The node to extract from.
+        source_lines: Raw source lines of the file.
+
+    Returns:
+        Textual body.
+    """
     if not node.body:
         return ""
     start = node.body[0].lineno - 1

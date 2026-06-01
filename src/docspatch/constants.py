@@ -1,4 +1,4 @@
-"""Project-wide domain constants. Single source of truth for config defaults and key-sets."""
+"""Define default settings and constants for docspatch configuration."""
 
 from typing import Final
 
@@ -14,9 +14,7 @@ GLOBAL_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"provider"})
 REPO_CONFIG_KEYS: Final[frozenset[str]] = frozenset(
     {"generator_model", "scout_model", "tone", "batch_token_limit", "concurrency_limit", "call_timeout"}
 )
-INT_CONFIG_KEYS: Final[frozenset[str]] = frozenset(
-    {"batch_token_limit", "concurrency_limit", "call_timeout"}
-)
+INT_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"batch_token_limit", "concurrency_limit", "call_timeout"})
 
 DEFAULT_TONE: Final[str] = "professional"
 DEFAULT_BATCH_TOKEN_LIMIT: Final[int] = 10000

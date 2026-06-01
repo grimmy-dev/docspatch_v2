@@ -1,10 +1,4 @@
-"""Token cost estimation. Separates input and output dollar math.
-
-Earlier code multiplied ``(input_price + output_price)`` by input-token count,
-treating output cost as if it scaled with input tokens — that overstates cost
-2-5× depending on provider. This module projects output tokens as a fraction
-of input and prices each side independently.
-"""
+"""Provide utilities for estimating and calculating LLM costs."""
 
 from dataclasses import dataclass
 
@@ -25,10 +19,10 @@ class CostEstimate:
 
     @property
     def total(self) -> float:
-        """Calculate the cumulative cost of the estimate.
+        """Return the sum of input and output costs.
 
         Returns:
-            The sum of input and output costs.
+            Total cost.
         """
         return self.input_cost + self.output_cost
 
@@ -39,16 +33,19 @@ def estimate_cost(
     input_tokens: int,
     output_ratio: float = DEFAULT_OUTPUT_RATIO,
 ) -> CostEstimate:
-    """Estimate dollar cost for a pipeline run.
+    """Calculate the projected cost for a pipeline run.
 
     Args:
-        provider: One of ``anthropic``, ``openai``, ``gemini``.
-        tier: One of ``fast``, ``balanced``, ``best``.
-        input_tokens: Total input tokens for the run.
-        output_ratio: Projected output tokens as a fraction of input. Must be ≥ 0.
+        provider: LLM provider name.
+        tier: Performance tier.
+        input_tokens: Total input tokens.
+        output_ratio: Estimated output token fraction.
+
+    Returns:
+        Cost estimate object.
 
     Raises:
-        ConfigError: On unknown provider/tier or negative inputs.
+        ConfigError: Inputs are invalid or configurations are unknown.
     """
     if input_tokens < 0:
         raise ConfigError.must_be_non_negative("input_tokens", input_tokens)
@@ -63,9 +60,10 @@ def estimate_cost(
 
 
 def actual_cost(provider: str, tier: str, input_tokens: int, output_tokens: int) -> CostEstimate:
-    """Dollar cost from measured input *and* output tokens — no projection.
+    """Compute the final cost based on actual measured tokens.
 
-    Used by the end-of-run summary, where both token counts are known for real.
+    Returns:
+        Cost estimate object.
     """
     if input_tokens < 0 or output_tokens < 0:
         raise ConfigError.must_be_non_negative("tokens", min(input_tokens, output_tokens))

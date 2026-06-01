@@ -1,9 +1,5 @@
-"""Shared state types for the docs pipeline graphs.
-
-The plan, generate and finalize graphs each have their own ``TypedDict`` state;
-the Pydantic models below are the values that travel inside that state and so
-must round-trip cleanly through the checkpointer's serializer.
-"""
+"""Define state management types for the documentation pipeline.
+This module maintains progress and configuration throughout the generation process."""
 
 from operator import add
 from pathlib import Path
@@ -70,16 +66,24 @@ class GeneratedDoc(BaseModel):
 
     @property
     def key(self) -> GenKey:
-        """Retrieve the composite identifier for the document.
+        """Generate the unique identifier for the generated content.
 
         Returns:
-            A key tuple containing the relative file path and the qualified name.
+            Tuple of file path and qualified function name.
         """
         return (self.rel, self.qualname)
 
 
 def merge_feedback(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Reducer: concatenate feedback notes per key, oldest first."""
+    """Combine feedback dictionaries.
+
+    Args:
+        a: Base feedback.
+        b: New feedback to merge.
+
+    Returns:
+        Unified feedback dictionary.
+    """
     out = {k: list(v) for k, v in a.items()}
     for k, v in b.items():
         out.setdefault(k, []).extend(v)
@@ -87,7 +91,15 @@ def merge_feedback(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str
 
 
 def merge_generated(a: list[GeneratedDoc], b: list[GeneratedDoc]) -> list[GeneratedDoc]:
-    """Reducer: latest-wins merge by ``(rel, qualname)``."""
+    """Merge documentation results, prioritizing newer values for duplicate keys.
+
+    Args:
+        a: Existing documentation results.
+        b: Incoming documentation results.
+
+    Returns:
+        List of merged unique documents.
+    """
     by_key: dict[GenKey, GeneratedDoc] = {}
     for entry in (*a, *b):
         by_key[entry.key] = entry

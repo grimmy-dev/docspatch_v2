@@ -1,8 +1,4 @@
-"""Shared end-of-run summary panel for the docs and scout pipelines.
-
-Each pipeline assembles its own rows and title; this module owns the panel
-layout, the real-token cost rows, the cache-hit row, and the unresolved list.
-"""
+"""Display session metrics and cost information."""
 
 from collections.abc import Iterable
 
@@ -13,10 +9,14 @@ from docspatch.ui.panels import kv_panel
 
 
 def cost_rows(usage: TokenUsage, provider: str, tier: str, *, sunk: bool = False) -> list[tuple[str, str]]:
-    """Real-token rows for the summary panel.
+    """Generate tabular rows for token usage and costs.
 
-    ``sunk`` flags an aborted run, where the tokens were billed but produced no
-    written docstring — the label says so.
+    Args:
+        usage: Consumed tokens.
+        sunk: Flag for aborted runs.
+
+    Returns:
+        List of string pairs.
     """
     cost = actual_cost(provider, tier, usage.input_tokens, usage.output_tokens)
     label = "Tokens (sunk cost)" if sunk else "Tokens in / out"
@@ -27,7 +27,11 @@ def cost_rows(usage: TokenUsage, provider: str, tier: str, *, sunk: bool = False
 
 
 def cache_hit_row(hits: int, total: int) -> tuple[str, str]:
-    """Cache-hit ratio row — ``hits`` of ``total`` functions skipped via cache."""
+    """Generate a summary row for cache performance.
+
+    Returns:
+        Label and formatted ratio string.
+    """
     pct = f" ({hits * 100 // total}%)" if total else ""
     return ("Cache hits", f"{hits}/{total}{pct}")
 
@@ -39,7 +43,11 @@ def render_summary(
     unresolved: Iterable[str] = (),
     border_style: str = "green",
 ) -> None:
-    """Print the summary panel, followed by the unresolved file list when non-empty."""
+    """Display the summary panel with unresolved items.
+
+    Args:
+        unresolved: Items left without decisions.
+    """
     console.print(kv_panel(title, rows, border_style=border_style))
     pending = sorted(unresolved)
     if pending:

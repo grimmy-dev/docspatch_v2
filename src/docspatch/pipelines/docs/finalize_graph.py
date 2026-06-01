@@ -1,8 +1,4 @@
-"""Finalize graph: review → rerun loop → commit.
-
-The review node pauses on ``interrupt`` for the UI; conditional edges drive
-the rerun loop and route the accepted set into the checkpointed commit node.
-"""
+"""Coordinate the review and commit graph lifecycle for generated documentation."""
 
 import asyncio
 from typing import Any, cast
@@ -26,6 +22,7 @@ from docspatch.pipelines.docs.state import (
 )
 from docspatch.pipelines.fanout import load_state
 from docspatch.source import MODULE_QUALNAME
+from docspatch.ui import status
 
 
 async def drive_finalize(
@@ -34,11 +31,13 @@ async def drive_finalize(
     handler: ReviewHandler | None,
     entries: list[GeneratedDoc],
 ) -> FinalizeResult:
-    """Run the review → commit graph, relaying each ``interrupt`` to the handler.
+    """Execute the review and commit graph, relaying interrupts to the UI handler.
 
-    The rerun and commit loops live in the graph; this driver only ferries
-    interrupt payloads (review choices, hash-mismatch prompts) to the UI and
-    resumes with the user's answer.
+    Returns:
+        The final summary of processed documentation tasks.
+
+    Raises:
+        RuntimeError: The graph interrupts without a provided handler.
     """
     thread_id = f"review-{ctx.run_id}"
     await saver.adelete_thread(thread_id)
@@ -48,8 +47,18 @@ async def drive_finalize(
     # Any: graph input is the initial state dict on the first turn, then a
     # Command(resume=...) on every loop after an interrupt — no shared static type.
     next_input: Any = {"entries": entries}
+    # Bridge the gap after the progress bar clears: the first invocation reads
+    # state and builds the review queue before it interrupts. Only the first —
+    # an interactive run always stops at the review interrupt before reaching
+    # commit, so commit's own status spinner never nests inside this one.
+    bridging = handler is not None
     while True:
-        result = await graph.ainvoke(next_input, config=config)
+        if bridging:
+            with status("Preparing review..."):
+                result = await graph.ainvoke(next_input, config=config)
+            bridging = False
+        else:
+            result = await graph.ainvoke(next_input, config=config)
         interrupts = result.get("__interrupt__")
         if not interrupts:
             break
@@ -65,11 +74,7 @@ async def drive_finalize(
 
     committed = final.get("committed_files", [])
     accepted = set(final.get("accepted", []))
-    written = [
-        e
-        for e in final.get("entries", [])
-        if e.rel in committed and f"{e.rel}::{e.qualname}" in accepted
-    ]
+    written = [e for e in final.get("entries", []) if e.rel in committed and f"{e.rel}::{e.qualname}" in accepted]
     module_count = sum(1 for e in written if e.qualname == MODULE_QUALNAME)
     return FinalizeResult(
         committed=committed,
@@ -81,7 +86,11 @@ async def drive_finalize(
 
 
 def build_finalize_graph(ctx: GraphContext, saver: AsyncSqliteSaver):  # noqa: ANN201
-    """START → review → (regenerate loop | commit | abort). Checkpointed."""
+    """Define the state transition graph for reviewing and committing changes.
+
+    Returns:
+        The compiled StateGraph.
+    """
     g: StateGraph = StateGraph(ReviewState)
     g.add_node("review", make_review(ctx))
     g.add_node("regenerate", make_regenerate(ctx))
@@ -94,7 +103,11 @@ def build_finalize_graph(ctx: GraphContext, saver: AsyncSqliteSaver):  # noqa: A
 
 
 def route_after_review(state: ReviewState) -> list[Send] | str:
-    """Abort → END, queued reruns → ``regenerate`` fan-out, otherwise → ``commit``."""
+    """Direct state transitions based on the user's review outcome.
+
+    Returns:
+        The target node or list of fan-out sends.
+    """
     if state.get("aborted"):
         return END
     batches = state.get("pending_rerun", [])
@@ -105,7 +118,11 @@ def route_after_review(state: ReviewState) -> list[Send] | str:
 
 
 def make_review(ctx: GraphContext):  # noqa: ANN201
-    """Interrupt for user review; queue rerun batches and the cumulative verdict."""
+    """Create an interrupt node for user evaluation of generated content.
+
+    Returns:
+        A function compatible with state graph node signature.
+    """
 
     def review(state: ReviewState) -> ReviewState:
         entries = state.get("entries", [])
@@ -159,7 +176,11 @@ def make_review(ctx: GraphContext):  # noqa: ANN201
 
 
 def rerun_batches(ctx: GraphContext, rerun_ids: list[str]) -> list[BatchRef]:
-    """Greedy-batch the rerun targets by token cost. Unknown ids are dropped."""
+    """Organize rerun targets into batches based on token constraints.
+
+    Returns:
+        A list of BatchRef instances.
+    """
     refs = [
         TargetRef(rel=rel, qualname=qualname)
         for rid in rerun_ids
@@ -170,7 +191,14 @@ def rerun_batches(ctx: GraphContext, rerun_ids: list[str]) -> list[BatchRef]:
 
 
 def make_regenerate(ctx: GraphContext):  # noqa: ANN201
-    """Re-run one rerun batch with accumulated feedback; merged latest-wins."""
+    """Construct a regeneration handler to update docstrings based on batch feedback.
+
+    Args:
+        ctx: Context managing the documentation graph.
+
+    Returns:
+        An asynchronous callable that accepts a payload and returns the resulting ReviewState.
+    """
 
     async def regenerate(payload: dict) -> ReviewState:
         batch: BatchRef = payload["batch"]
@@ -182,7 +210,14 @@ def make_regenerate(ctx: GraphContext):  # noqa: ANN201
 
 
 def make_commit(ctx: GraphContext):  # noqa: ANN201
-    """Commit node — write accepted docstrings to disk transactionally."""
+    """Create a commit operation to persist accepted docstrings to disk.
+
+    Args:
+        ctx: Context providing the graph structure for the commit process.
+
+    Returns:
+        A callable that takes a ReviewState and returns the updated state after committing changes.
+    """
 
     def commit(state: ReviewState) -> ReviewState:
         return cast("ReviewState", commit_docstrings(ctx, dict(state)))

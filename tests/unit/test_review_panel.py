@@ -51,9 +51,7 @@ def test_build_previews_handles_module_docstring(tmp_path: Path) -> None:
     src = tmp_path / "mod.py"
     src.write_text("import os\n\n\ndef f():\n    return os\n")
 
-    previews = build_previews(
-        [ReviewEntry(rel="mod.py", qualname="<module>", docstring="Module doc.")], tmp_path
-    )
+    previews = build_previews([ReviewEntry(rel="mod.py", qualname="<module>", docstring="Module doc.")], tmp_path)
 
     preview = previews[("mod.py", "<module>")]
     assert '"""Module doc."""' in preview.code
@@ -213,9 +211,7 @@ def test_accept_all_rejects_parse_failed_entry(tmp_path: Path) -> None:
     entries = [
         {"rel": "mod.py", "qualname": "foo", "docstring": "", "parse_failed": True, "raw_output": "not json"},
     ]
-    choice = review_session(
-        entries, repo_root=tmp_path, prompter=ScriptedPrompter([TOP_ACCEPT_ALL]), allow_rerun=True
-    )
+    choice = review_session(entries, repo_root=tmp_path, prompter=ScriptedPrompter([TOP_ACCEPT_ALL]), allow_rerun=True)
     assert choice["accepted"] == []
     assert choice["rejected"] == ["mod.py::foo"]
 
@@ -289,9 +285,7 @@ def test_build_code_truncates_long_body() -> None:
 
 
 def test_build_code_keeps_signature_and_docstring_visible() -> None:
-    body = 'def foo():\n    """The docstring under review."""\n' + "\n".join(
-        f"    x{i} = {i}" for i in range(120)
-    )
+    body = 'def foo():\n    """The docstring under review."""\n' + "\n".join(f"    x{i} = {i}" for i in range(120))
     out = render_str(build_code(preview=Preview(code=body, start_line=1)), width=80)
     assert "def foo" in out
     assert "docstring under review" in out
