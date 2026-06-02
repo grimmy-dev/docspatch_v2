@@ -41,9 +41,9 @@ def test_prompt_includes_remarks_when_given() -> None:
 
 def test_contains_banned_phrase_case_insensitive() -> None:
     assert contains_banned_phrase("This function returns x.")
-    assert contains_banned_phrase("Simply does X.")
+    assert contains_banned_phrase("It is responsible for X.")
     assert not contains_banned_phrase("Return the sum of inputs.")
 
 
 def test_banned_phrase_constants_stable() -> None:
-    assert "This function" in BANNED_PHRASES
+    assert "this function" in BANNED_PHRASES

@@ -5,11 +5,12 @@ The overview is one LLM pass over the per-file summaries scout already produced
 """
 
 import gzip
-from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
 from docspatch.llm import LLMClient, TokenUsage
+from docspatch.pipelines.scout.grouping import group_by_dir
+from docspatch.pipelines.scout.prompts import SUMMARY_VOICE
 from docspatch.schemas import FileSummary, ProjectOverviewOutput
 from docspatch.utils.fs import atomic_write
 
@@ -58,14 +59,10 @@ def _overview_input(summaries: Iterable[FileSummary]) -> str:
     Returns:
         The grouped summary text fed to the synthesis call.
     """
-    by_dir: dict[str, list[FileSummary]] = defaultdict(list)
-    for summary in summaries:
-        by_dir[str(Path(summary.path).parent)].append(summary)
-
     lines: list[str] = []
-    for directory in sorted(by_dir):
+    for directory, grouped in group_by_dir(summaries):
         lines.append(f"## {directory}")
-        for summary in sorted(by_dir[directory], key=lambda s: s.path):
+        for summary in grouped:
             lines.append(f"- {summary.path}: {summary.summary}")
             if summary.interfaces:
                 lines.append(f"  interfaces: {', '.join(summary.interfaces)}")
@@ -82,14 +79,25 @@ def _build_prompt(summaries: Iterable[FileSummary]) -> str:
     """
     return (
         "Below are per-file summaries of a codebase, grouped by directory. "
-        "Synthesize a project-level overview for a reader who has never seen the code.\n"
-        "- `summary`: one paragraph on what the project does and who uses it.\n"
-        "- `architecture`: how the codebase is organised and how the pieces interact, "
-        "including the main data/control flow.\n"
-        "- `components`: the major subsystems (package/pipeline level, not per file), "
-        "each with a one-line role.\n"
-        "Be concrete and specific to this codebase. Start sentences with a verb where natural. "
-        "No filler, no LLM-ese.\n\n"
+        "Synthesize a project-level overview for a reader who has never seen the code. "
+        "Generalise from the summaries; do not just concatenate them.\n"
+        "- summary: one paragraph on what the project does and who uses it.\n"
+        "- architecture: how the codebase is organised and how the pieces interact, "
+        "including the main data/control flow from entry point to output.\n"
+        "- components: the major subsystems (package/pipeline level, not per file), "
+        "each with a one-line role that names what it concretely does.\n"
+        f"{SUMMARY_VOICE}"
+        "Examples (bad -> good) component roles — each bad form opens with a vague verb "
+        "or a marketing word; rewrite to a concrete one:\n"
+        "  bad:  Handles various LLM-related operations.\n"
+        "  good: Wraps Anthropic, OpenAI, and Gemini behind one retry-aware client.\n"
+        "  bad:  Orchestrates complex LangGraph workflows for documentation.\n"
+        "  good: Runs the docstring and scout pipelines as checkpointed LangGraph graphs.\n"
+        "  bad:  Manages persistent, versioned storage of runs.\n"
+        "  good: Stores run results as gzipped, schema-versioned JSON on disk.\n"
+        "  bad:  Provides shared infrastructure and leverages LLMs.\n"
+        "  good: Holds config, atomic file IO, git path filtering, and error types.\n"
+        "Be concrete and specific to this codebase.\n\n"
         f"{_overview_input(summaries)}"
     )
 

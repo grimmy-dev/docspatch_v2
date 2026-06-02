@@ -40,24 +40,6 @@ def get_pyproject_field(pyproject_path: Path, field: str) -> str | None:
     return str(value) if value is not None else None
 
 
-def get_entry_points(pyproject_path: Path) -> list[str]:
-    """Return the console-script names declared under [project.scripts].
-
-    Args:
-        pyproject_path: Path to the pyproject.toml file.
-
-    Returns:
-        Script names, or an empty list when none are declared or the file is unreadable.
-    """
-    if not pyproject_path.exists():
-        return []
-    try:
-        data = tomllib.loads(pyproject_path.read_text())
-    except (tomllib.TOMLDecodeError, OSError):
-        return []
-    return sorted(data.get("project", {}).get("scripts", {}))
-
-
 def project_facts(repo_root: Path) -> ProjectFacts:
     """Collect generic project metadata from pyproject.toml, omitting absent fields.
 
@@ -68,18 +50,25 @@ def project_facts(repo_root: Path) -> ProjectFacts:
         Facts with a guaranteed name and only the labelled fields that exist.
     """
     pyproject = repo_root / "pyproject.toml"
-    name = get_pyproject_field(pyproject, "name") or repo_root.resolve().name
-    description = get_pyproject_field(pyproject, "description")
+    try:
+        project = tomllib.loads(pyproject.read_text()).get("project", {})
+    except (tomllib.TOMLDecodeError, OSError):
+        project = {}
+
+    def field_str(key: str) -> str | None:
+        value = project.get(key)
+        return str(value) if value is not None else None
 
     labelled: list[tuple[str, str]] = []
-    if version := get_pyproject_field(pyproject, "version"):
+    if version := field_str("version"):
         labelled.append(("Version", version))
-    if python := get_pyproject_field(pyproject, "requires-python"):
+    if python := field_str("requires-python"):
         labelled.append(("Python", python))
-    if scripts := get_entry_points(pyproject):
+    if scripts := sorted(project.get("scripts", {})):
         labelled.append(("Entry points", ", ".join(scripts)))
 
-    return ProjectFacts(name=name, description=description, labelled=labelled)
+    name = field_str("name") or repo_root.resolve().name
+    return ProjectFacts(name=name, description=field_str("description"), labelled=labelled)
 
 
 def get_dir_tree(root: Path, max_depth: int = 3) -> str:

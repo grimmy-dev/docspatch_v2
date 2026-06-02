@@ -66,6 +66,14 @@ class Prompter(Protocol):
         """
         ...
 
+    def edit(self, question: str, default: str = "") -> str:
+        """Edit a multi-line value seeded with the current text.
+
+        Returns:
+            The edited string.
+        """
+        ...
+
 
 class QuestionaryPrompter:
     """Real terminal prompter. Returns the selected `value` for dict-style choices.
@@ -127,6 +135,17 @@ class QuestionaryPrompter:
             return default
         result = questionary.text(question, default=default).ask()
         return "" if result is None else str(result)
+
+    def edit(self, question: str, default: str = "") -> str:
+        """Edit multi-line text in place, seeded with the current value.
+
+        Returns:
+            The edited string, or the default when run headless or cancelled.
+        """
+        if not is_interactive():
+            return default
+        result = questionary.text(question, default=default, multiline=True).ask()
+        return default if result is None else str(result)
 
 
 class ScriptedPrompter:
@@ -191,6 +210,15 @@ class ScriptedPrompter:
         """
         value = self._next(question)
         return "" if value is None else str(value)
+
+    def edit(self, question: str, default: str = "") -> str:
+        """Provide a scripted edited string.
+
+        Returns:
+            The scripted string, or the default when the scripted value is None.
+        """
+        value = self._next(question)
+        return default if value is None else str(value)
 
 
 async def aprompt[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T:

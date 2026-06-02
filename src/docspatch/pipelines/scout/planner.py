@@ -1,13 +1,12 @@
-"""Coordinate scan planning, file partitioning, and context generation for the scout pipeline."""
+"""Cache-aware planning: which files need scouting, and at what token cost."""
 
-from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 
 from docspatch.cache import ScoutCache
+from docspatch.pipelines.scout.grouping import group_by_dir
 from docspatch.pipelines.scout.state import FileMiss, ScanPlan
-from docspatch.schemas import FileSummary
 from docspatch.source import compress, estimate_tokens, file_hash
 
 
@@ -83,16 +82,11 @@ def build_structured_context(cache: ScoutCache, files: list[str]) -> str:
     Returns:
         A formatted string containing structured summary information.
     """
-    by_dir: dict[str, list[FileSummary]] = defaultdict(list)
-    for path in files:
-        summary = cache.get(path)
-        if summary:
-            by_dir[str(Path(path).parent)].append(summary)
-
+    summaries = [s for p in files if (s := cache.get(p)) is not None]
     lines: list[str] = []
-    for directory in sorted(by_dir):
+    for directory, grouped in group_by_dir(summaries):
         lines.append(f"# {directory}")
-        for summary in sorted(by_dir[directory], key=lambda s: s.path):
+        for summary in grouped:
             lines.append(f"  {Path(summary.path).name}")
             lines.append(f"    {summary.summary}")
             for fn in summary.functions:

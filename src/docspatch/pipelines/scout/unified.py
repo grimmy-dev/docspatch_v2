@@ -1,10 +1,10 @@
 """Generate and manage the unified markdown summary file for the project."""
 
-from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
 from docspatch.cache import ScoutCache
+from docspatch.pipelines.scout.grouping import group_by_dir
 from docspatch.schemas import FileSummary, ProjectOverviewOutput
 from docspatch.utils.fs import atomic_write
 from docspatch.utils.project import ProjectFacts, project_facts
@@ -85,14 +85,10 @@ def render_unified(
     Returns:
         The complete unified markdown document.
     """
-    by_dir: dict[str, list[FileSummary]] = defaultdict(list)
-    for summary in summaries:
-        by_dir[str(Path(summary.path).parent)].append(summary)
-
     blocks: list[str] = [render_project_block(facts, overview)]
-    for directory in sorted(by_dir):
+    for directory, grouped in group_by_dir(summaries):
         blocks.append(f"# {directory}")
-        for summary in sorted(by_dir[directory], key=lambda s: s.path):
+        for summary in grouped:
             blocks.append(render_block(summary))
     return "\n".join(blocks) + "\n"
 

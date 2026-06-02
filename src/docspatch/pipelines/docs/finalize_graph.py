@@ -17,6 +17,7 @@ from docspatch.pipelines.docs.state import (
     BatchRef,
     FinalizeResult,
     GeneratedDoc,
+    RegenerateInput,
     ReviewState,
     TargetRef,
 )
@@ -164,13 +165,21 @@ def make_review(ctx: GraphContext):  # noqa: ANN201
         rerun_ids: list[str] = choice.get("rerun", []) if allow_rerun else []
         notes: dict[str, str] = choice.get("feedback", {})
 
-        return {
+        result: ReviewState = {
             "accepted": accepted,
             "rejected": rejected,
             "review_round": round_n + 1,
             "feedback": {rid: [notes[rid]] for rid in rerun_ids if notes.get(rid)},
             "pending_rerun": rerun_batches(ctx, rerun_ids),
         }
+        # Hand-edited docstrings overwrite their generated entries (merge_generated
+        # keys by (rel, qualname)), so commit writes the user's text.
+        if edits := choice.get("edited", {}):
+            by_id = {f"{e.rel}::{e.qualname}": e for e in pending}
+            result["entries"] = [
+                by_id[rid].model_copy(update={"docstring": text}) for rid, text in edits.items() if rid in by_id
+            ]
+        return result
 
     return review
 
@@ -200,10 +209,8 @@ def make_regenerate(ctx: GraphContext):  # noqa: ANN201
         An asynchronous callable that accepts a payload and returns the resulting ReviewState.
     """
 
-    async def regenerate(payload: dict) -> ReviewState:
-        batch: BatchRef = payload["batch"]
-        feedback: dict[str, list[str]] = payload.get("feedback", {})
-        docs = await generate_for_batch(ctx, batch, feedback)
+    async def regenerate(state: RegenerateInput) -> ReviewState:
+        docs = await generate_for_batch(ctx, state["batch"], state.get("feedback", {}))
         return {"entries": docs or []}
 
     return regenerate

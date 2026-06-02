@@ -53,6 +53,7 @@ TOP_REVIEW = "review"
 TOP_ABORT = "abort"
 
 ITEM_ACCEPT = "accept"
+ITEM_EDIT = "edit"
 ITEM_REJECT = "reject"
 ITEM_RERUN = "rerun"
 ITEM_BACK = "back"
@@ -84,12 +85,17 @@ class ReviewEntry:
 
 @dataclass
 class Choice:
-    """The user's verdict, mirrored straight into the resume dict."""
+    """The user's verdict, mirrored straight into the resume dict.
+
+    ``edited`` maps an accepted entry's id to the user's hand-edited docstring;
+    the commit node applies it in place of the generated text.
+    """
 
     accepted: list[str] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
     rerun: list[str] = field(default_factory=list)
     feedback: dict[str, str] = field(default_factory=dict)
+    edited: dict[str, str] = field(default_factory=dict)
     aborted: bool = False
 
     def as_dict(self) -> dict:
@@ -103,6 +109,7 @@ class Choice:
             "rejected": self.rejected,
             "rerun": self.rerun,
             "feedback": self.feedback,
+            "edited": self.edited,
             "aborted": self.aborted,
         }
 
@@ -134,10 +141,15 @@ def prompt_conflict(prompter: Prompter, file: str) -> dict:
 
 @dataclass(frozen=True)
 class Preview:
-    """Patched source slice for one entry, plus the line where the signature begins."""
+    """Patched source slice for one entry, plus the line where the signature begins.
+
+    ``doc_lines`` is the inclusive absolute line range of the inserted docstring,
+    used to highlight exactly what changed; None when it cannot be resolved.
+    """
 
     code: str
     start_line: int
+    doc_lines: tuple[int, int] | None = None
 
 
 def review_session(
@@ -172,10 +184,20 @@ def review_session(
         return Choice().as_dict()
 
     files, siblings = files_and_siblings(parsed)
-    previews = build_previews(parsed, repo_root)
+    # Build previews per file on first view, not all upfront — a run aborted early
+    # then skips the patch/parse work for files never opened.
+    entries_by_file = patchable_by_file(parsed)
+    preview_cache: dict[tuple[str, str], Preview] = {}
+    built: set[str] = set()
+
+    def preview_for(entry: ReviewEntry) -> Preview:
+        if entry.rel not in built:
+            built.add(entry.rel)
+            preview_cache.update(build_file_previews(repo_root, entry.rel, entries_by_file.get(entry.rel, [])))
+        return preview_cache.get((entry.rel, entry.qualname)) or Preview(code="", start_line=1)
 
     def render(entry: ReviewEntry, ctx: RenderCtx) -> RenderableType:
-        preview = previews.get((entry.rel, entry.qualname)) or Preview(code="", start_line=1)
+        preview = preview_for(entry)
         return render_review_panel(
             entry=entry,
             ctx=ctx,
@@ -221,6 +243,7 @@ def run_review(
     rejected: dict[str, ReviewEntry] = {}
     rerun: dict[str, ReviewEntry] = {}
     feedback: dict[str, str] = {}
+    edited: dict[str, str] = {}
 
     while True:
         decided = accepted.keys() | rejected.keys() | rerun.keys()
@@ -244,6 +267,7 @@ def run_review(
                 rejected=list(rejected),
                 rerun=list(rerun),
                 feedback=feedback,
+                edited=edited,
                 aborted=True,
             )
             print_summary(outcome, aborted=True)
@@ -254,6 +278,7 @@ def run_review(
             rejected=rejected,
             rerun=rerun,
             feedback=feedback,
+            edited=edited,
             render=render,
             prompter=prompter,
             total=len(items),
@@ -267,6 +292,7 @@ def run_review(
         rejected=list(rejected),
         rerun=list(rerun),
         feedback=feedback,
+        edited=edited,
     )
     print_summary(outcome, aborted=False)
     return outcome
@@ -301,6 +327,7 @@ def walk_items(
     rejected: dict[str, ReviewEntry],
     rerun: dict[str, ReviewEntry],
     feedback: dict[str, str],
+    edited: dict[str, str],
     render,  # noqa: ANN001
     prompter: Prompter,
     total: int,
@@ -324,6 +351,12 @@ def walk_items(
         action = prompter.select(f"[{idx}/{total}] Action?", item_menu(item, allow_rerun=allow_rerun))
         if action == ITEM_ACCEPT:
             accepted[item.id] = item
+        elif action == ITEM_EDIT:
+            new_doc = prompter.edit(f"Edit docstring for {item.qualname}:", default=item.docstring).strip()
+            if new_doc and new_doc != item.docstring.strip():
+                edited[item.id] = new_doc
+            accepted[item.id] = item
+            console.print(f"[green]✎ edited · {item.id}[/green]" if item.id in edited else f"[green]✓ accepted · {item.id}[/green]")
         elif action == ITEM_REJECT:
             rejected[item.id] = item
             console.print(f"[yellow]✗ rejected · {item.id}[/yellow]")
@@ -351,6 +384,7 @@ def item_menu(item: ReviewEntry, *, allow_rerun: bool) -> dict[str, str]:
     menu: dict[str, str] = {}
     if not item.parse_failed:
         menu["Accept"] = ITEM_ACCEPT
+        menu["Edit"] = ITEM_EDIT
     menu["Reject"] = ITEM_REJECT
     if allow_rerun:
         menu["Rerun with feedback"] = ITEM_RERUN
@@ -494,6 +528,8 @@ def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Syntax:
         kept = lines[: max_lines - 1]
         elided = len(lines) - len(kept)
         raw = "\n".join([*kept, f"# ▾ {elided} more body lines"])
+    # Highlight the inserted docstring so the reviewer sees exactly what changed.
+    highlight = set(range(preview.doc_lines[0], preview.doc_lines[1] + 1)) if preview.doc_lines else set()
     return Syntax(
         raw,
         "python",
@@ -501,6 +537,7 @@ def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Syntax:
         start_line=preview.start_line,
         word_wrap=True,
         background_color="default",
+        highlight_lines=highlight,
     )
 
 
@@ -598,32 +635,43 @@ def files_and_siblings(entries: list[ReviewEntry]) -> tuple[list[str], dict[str,
     return files, siblings
 
 
-def build_previews(entries: list[ReviewEntry], repo_root: Path) -> dict[tuple[str, str], Preview]:
-    """Generate code previews for all valid entries.
+def patchable_by_file(entries: list[ReviewEntry]) -> dict[str, list[ReviewEntry]]:
+    """Group entries that carry a docstring by their file.
 
     Args:
         entries: Review entries.
-        repo_root: Project base directory.
 
     Returns:
-        Dictionary mapping identifiers to preview objects.
+        Mapping of relative path to its patchable entries (parse-failed dropped).
     """
     by_file: dict[str, list[ReviewEntry]] = {}
     for entry in entries:
         if entry.parse_failed:  # no docstring to patch in
             continue
         by_file.setdefault(entry.rel, []).append(entry)
+    return by_file
 
+
+def build_file_previews(repo_root: Path, rel: str, group: list[ReviewEntry]) -> dict[tuple[str, str], Preview]:
+    """Generate code previews for one file's entries by patching it once.
+
+    Args:
+        repo_root: Project base directory.
+        rel: Relative path of the file.
+        group: The file's patchable entries.
+
+    Returns:
+        Dictionary mapping identifiers to preview objects.
+    """
+    path = repo_root / rel
+    if not group or not path.exists():
+        return {}
+    patched = patch_file(path.read_text(), group)
     out: dict[tuple[str, str], Preview] = {}
-    for rel, group in by_file.items():
-        path = repo_root / rel
-        if not path.exists():
-            continue
-        patched = patch_file(path.read_text(), group)
-        for entry in group:
-            preview = extract_signature_and_docstring(patched, entry.qualname)
-            if preview is not None:
-                out[(entry.rel, entry.qualname)] = preview
+    for entry in group:
+        preview = extract_signature_and_docstring(patched, entry.qualname)
+        if preview is not None:
+            out[(entry.rel, entry.qualname)] = preview
     return out
 
 
@@ -665,13 +713,16 @@ def extract_signature_and_docstring(patched_source: str, qualname: str) -> Previ
         return None
     start_line = func.lineno
     end_line = signature_end(func)
+    doc_lines: tuple[int, int] | None = None
     if func.body:
         first = func.body[0]
         if is_docstring(first):
-            end_line = max(end_line, first.end_lineno or end_line)
+            doc_end = first.end_lineno or first.lineno
+            end_line = max(end_line, doc_end)
+            doc_lines = (first.lineno, doc_end)
     lines = patched_source.splitlines()
     snippet = "\n".join(lines[start_line - 1 : end_line])
-    return Preview(code=snippet, start_line=start_line)
+    return Preview(code=snippet, start_line=start_line, doc_lines=doc_lines)
 
 
 def module_preview(tree: ast.Module, patched_source: str) -> Preview | None:
@@ -682,9 +733,10 @@ def module_preview(tree: ast.Module, patched_source: str) -> Preview | None:
     """
     if not tree.body or not is_docstring(tree.body[0]):
         return None
-    end_line = tree.body[0].end_lineno or 1
+    doc = tree.body[0]
+    end_line = doc.end_lineno or 1
     snippet = "\n".join(patched_source.splitlines()[:end_line])
-    return Preview(code=snippet, start_line=1)
+    return Preview(code=snippet, start_line=1, doc_lines=(doc.lineno, end_line))
 
 
 def locate_function(tree: ast.AST, parts: list[str]) -> FunctionNode | None:

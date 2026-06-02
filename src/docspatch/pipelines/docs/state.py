@@ -129,6 +129,13 @@ class GenerateState(TypedDict, total=False):
     feedback: Annotated[dict[str, list[str]], merge_feedback]
 
 
+class RegenerateInput(TypedDict):
+    """Send payload for the regenerate node: one batch plus its rerun feedback."""
+
+    batch: BatchRef
+    feedback: dict[str, list[str]]
+
+
 class ReviewState(TypedDict, total=False):
     """Finalize graph state: review → rerun loop → commit.
 
