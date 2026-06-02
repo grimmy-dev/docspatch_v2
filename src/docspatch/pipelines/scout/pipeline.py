@@ -8,10 +8,11 @@ from docspatch.llm import LLMClient, TokenUsage
 from docspatch.llm.catalogue import tier_info
 from docspatch.llm.pricing import estimate_cost
 from docspatch.pipelines.scout.graph import run_scout
+from docspatch.pipelines.scout.overview import read_overview, synthesize_overview, write_overview
 from docspatch.pipelines.scout.planner import plan_uncached
 from docspatch.pipelines.scout.state import ScanPlan, ScoutResult
 from docspatch.pipelines.scout.unified import write_unified
-from docspatch.schemas import RunSettings
+from docspatch.schemas import ProjectOverviewOutput, RunSettings
 from docspatch.ui import Prompter, console, cost_panel, cost_rows, progress_bar, render_summary, status
 from docspatch.ui.retry_display import RetryDisplay
 from docspatch.utils.config import ConfigStore
@@ -36,16 +37,19 @@ def pre_build(
         ctx_store: Scout cache for persistent state.
         store: Configuration manager.
     """
-    paths = tracked_paths(repo_root)
+    with status("Scanning tracked files..."):
+        paths = tracked_paths(repo_root)
     if not paths:
         return
 
-    with status("Scanning tracked files for changes..."):
+    with status("Checking which files changed..."):
         scan = plan_uncached(paths, ctx_store)
 
     if scan.all_current:
         console.print("[dim]Context already up to date — skipping scout.[/dim]")
-        write_unified(ctx_store, paths, repo_root)
+        # Nothing changed: reuse the cached overview rather than pay for a call.
+        with status("Writing context summary..."):
+            write_unified(ctx_store, paths, repo_root, read_overview(repo_root))
         return
 
     print_estimate(provider, scan)
@@ -54,8 +58,46 @@ def pre_build(
         console.print("[dim]Scout skipped.[/dim]")
         return
 
-    execute(ctx_store, store, provider, api_key, scan, p)
-    write_unified(ctx_store, paths, repo_root)
+    result = execute(ctx_store, store, provider, api_key, scan, p)
+    # Files changed, so the cached overview is stale. Synthesize before any write:
+    # on failure this raises and SUMMARY.md is left untouched.
+    overview, overview_usage = refresh_overview(repo_root, ctx_store, paths, provider, api_key)
+    with status("Writing context summary..."):
+        write_unified(ctx_store, paths, repo_root, overview)
+    # One actual-cost panel at the very end — includes the overview call, which
+    # the up-front estimate could not foresee.
+    report_scout(provider, result, overview_usage)
+
+
+def refresh_overview(
+    repo_root: Path,
+    ctx_store: ScoutCache,
+    paths: list[str],
+    provider: str,
+    api_key: str,
+) -> tuple[ProjectOverviewOutput, TokenUsage]:
+    """Synthesize a fresh project overview from the per-file summaries and cache it.
+
+    Args:
+        repo_root: The repository root.
+        ctx_store: Scout cache holding the per-file summaries.
+        paths: Tracked paths whose summaries feed the overview.
+        provider: LLM provider for the single synthesis call.
+        api_key: Provider credentials.
+
+    Returns:
+        The synthesized overview and the tokens its call consumed.
+
+    Raises:
+        TransientExhausted: The provider stayed unavailable through every retry.
+        ParseFailed: The model never returned a valid overview.
+    """
+    summaries = [s for p in paths if (s := ctx_store.get(p)) is not None]
+    llm = LLMClient(provider=provider, api_key=api_key, generator_tier="fast")
+    with status("Synthesizing project overview..."):
+        overview, usage = asyncio.run(synthesize_overview(llm, summaries))
+    write_overview(repo_root, overview)
+    return overview, usage
 
 
 def tracked_paths(repo_root: Path) -> list[str]:
@@ -106,8 +148,11 @@ def execute(
     api_key: str,
     scan: ScanPlan,
     p: Prompter,
-) -> None:
-    """Run the scout pipeline for identified targets and report the final outcome.
+) -> ScoutResult:
+    """Run the scout pipeline for identified targets.
+
+    The final cost panel is rendered by the caller, after the overview call, so
+    its tokens fold into one actual-cost total.
 
     Args:
         ctx_store: The cache storage for scout context.
@@ -116,6 +161,9 @@ def execute(
         api_key: The authentication key for the provider.
         scan: The scan plan identifying files to process.
         p: The prompt manager.
+
+    Returns:
+        The scouting result, including token usage.
     """
     retry_display = RetryDisplay()
     llm = LLMClient(provider=provider, api_key=api_key, generator_tier="fast", retry_cb=retry_display)
@@ -151,17 +199,18 @@ def execute(
         finally:
             retry_display.unbind()
 
-    report_scout(provider, result)
+    return result
 
 
-def report_scout(provider: str, result: ScoutResult) -> None:
-    """Render the summary panel for the scouting process.
+def report_scout(provider: str, result: ScoutResult, overview_usage: TokenUsage | None = None) -> None:
+    """Render the final actual-cost panel for the scout pre-build.
 
     Args:
         provider: The provider used for the scout.
         result: The outcome of the scouting process.
+        overview_usage: Tokens spent on the project-overview synthesis call.
     """
-    usage = TokenUsage(result.input_tokens, result.output_tokens)
+    usage = TokenUsage(result.input_tokens, result.output_tokens) + (overview_usage or TokenUsage())
     rows = [
         ("Model", f"{tier_info(provider, 'fast').model} ({provider})"),
         ("Files scouted", str(result.scouted)),

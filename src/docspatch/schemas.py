@@ -193,6 +193,26 @@ class BatchSummaryOutput(BaseModel):
     )
 
 
+class ComponentNote(BaseModel):
+    """One major subsystem in the project-level overview."""
+
+    name: str = Field(description="Module, package, or subsystem name (e.g. 'scout pipeline', 'llm client').")
+    role: str = Field(description="One line on what this component is responsible for.")
+
+
+class ProjectOverviewOutput(BaseModel):
+    """Project-level synthesis built from every file summary. Codebase context, top of SUMMARY.md."""
+
+    summary: str = Field(description="One paragraph: what the project does and who uses it.")
+    architecture: str = Field(
+        description="How the codebase is organised and how the pieces interact, including the main data/control flow. A few sentences."
+    )
+    components: list[ComponentNote] = Field(
+        default_factory=list,
+        description="Major subsystems, each with a one-line role. Group at the package/pipeline level, not per file.",
+    )
+
+
 class ArgDoc(BaseModel):
     """One parameter line under a docstring's ``Args:`` section."""
 
