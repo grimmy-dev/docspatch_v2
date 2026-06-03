@@ -29,7 +29,7 @@ def _patch_env(
     mock_llm_cls = MagicMock(return_value=mock_client)
     monkeypatch.setattr("docspatch.pipelines.scout.pipeline.LLMClient", mock_llm_cls)
     monkeypatch.setattr(
-        "docspatch.commands.init.validate_api_key",
+        "docspatch.llm.client.validate_api_key",
         lambda _provider, _key: validate_key,
     )
     if context_up_to_date:

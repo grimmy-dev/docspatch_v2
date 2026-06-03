@@ -6,24 +6,18 @@ from pathlib import Path
 import typer
 
 from docspatch.cache import DocsCache
-from docspatch.checkpoints.janitor import start_janitor, vacuum_checkpoints
-from docspatch.checkpoints.runs import discard_incomplete_runs, list_incomplete_runs, pick_last_run
-from docspatch.llm import LLMClient, tier_for_model, validate_api_key
-from docspatch.pipelines.docs import run_docs
+from docspatch.llm import tier_for_model
 from docspatch.pipelines.docs.flags import RunFlags, preview_check, validate_run_flags
-from docspatch.pipelines.docs.generator import DocstringGenerator, LLMDocstringGenerator
 from docspatch.schemas import RunSettings
-from docspatch.ui import Prompter, QuestionaryPrompter, console
+from docspatch.ui import Prompter, QuestionaryPrompter, console, status
 from docspatch.ui.prompter import is_interactive
 from docspatch.ui.retry_display import RetryDisplay
-from docspatch.ui.review_panel import prompt_conflict, review_session
 from docspatch.utils.config import default_store
 from docspatch.utils.ignore import load_docsignore
 from docspatch.utils.lockfile import run_lock
 from docspatch.utils.logging import get_logger
 from docspatch.utils.scope import discover_targets
 from docspatch.utils.selection import ensure_configured
-from docspatch.utils.switcher import offer_switch
 
 log = get_logger("docs")
 
@@ -50,10 +44,20 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
     validate_run_flags(flags)
     repo_root = Path.cwd()
     with run_lock(repo_root):
-        ignore = load_docsignore(repo_root)
+        # Deferred so a bare `dp`/`--help` never pays the provider-SDK + libcst
+        # + langgraph import cost; only a real docs run does, under this spinner.
+        with status("Starting up…"):
+            from docspatch.checkpoints.runs import list_incomplete_runs, pick_last_run
+            from docspatch.llm import LLMClient, validate_api_key
+            from docspatch.pipelines.docs.generator import DocstringGenerator, LLMDocstringGenerator
+            from docspatch.ui.review_panel import prompt_conflict, review_session
+            from docspatch.utils.switcher import offer_switch
+
         # No explicit paths -> document the whole repo.
         scope = list(flags.paths) or [Path(".")]
-        targets = discover_targets(scope, repo_root, ignore=ignore, no_ignore=flags.no_ignore)
+        with status("Scanning files…"):
+            ignore = load_docsignore(repo_root)
+            targets = discover_targets(scope, repo_root, ignore=ignore, no_ignore=flags.no_ignore)
         log.debug("resolved scope: %d target file(s)", len(targets))
 
         store = default_store(repo_root)
@@ -153,6 +157,8 @@ def offer_resume(repo_root: Path, p: Prompter) -> str | None:
     Returns:
         The ID of the interrupted run if resumed, or null.
     """
+    from docspatch.checkpoints.runs import discard_incomplete_runs, list_incomplete_runs
+
     incomplete = asyncio.run(list_incomplete_runs(repo_root))
     if not incomplete:
         return None
@@ -177,6 +183,9 @@ async def run_with_janitor(*args: object, repo_root: Path, **kwargs: object):
     Returns:
         The documentation pipeline result.
     """
+    from docspatch.checkpoints.janitor import start_janitor, vacuum_checkpoints
+    from docspatch.pipelines.docs import run_docs
+
     # Hold a strong reference so the task is not GC'd before the sweep finishes.
     janitor = start_janitor(repo_root)
     try:
@@ -184,4 +193,6 @@ async def run_with_janitor(*args: object, repo_root: Path, **kwargs: object):
     finally:
         await janitor
         # The pipeline's AsyncSqliteSaver is closed by now — safe to vacuum.
-        await asyncio.to_thread(vacuum_checkpoints, repo_root / ".docspatch" / "checkpoints")
+        # This runs after the summary panel, so surface it instead of going blank.
+        with status("Tidying checkpoints…"):
+            await asyncio.to_thread(vacuum_checkpoints, repo_root / ".docspatch" / "checkpoints")

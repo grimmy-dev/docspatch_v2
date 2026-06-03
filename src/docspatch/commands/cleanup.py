@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from docspatch.cache import DocsCache, ScoutCache
-from docspatch.ui import Prompter, QuestionaryPrompter, console
+from docspatch.ui import Prompter, QuestionaryPrompter, console, status
+from docspatch.utils.logging import get_logger
+
+log = get_logger("cleanup")
 
 
 @dataclass
@@ -115,7 +118,8 @@ def run(prompter: Prompter | None = None, repo_root: Path | None = None) -> None
     """
     p = prompter or QuestionaryPrompter()
     root = repo_root or Path.cwd()
-    items = cleanup_items(root)
+    with status("Scanning artifacts…"):
+        items = cleanup_items(root)
     choices = {f"{item.label}  ({item.path})": item for item in items}
 
     raw = p.checkbox("Select items to delete:", choices)
@@ -129,6 +133,7 @@ def run(prompter: Prompter | None = None, repo_root: Path | None = None) -> None
         console.print("[dim]Cancelled.[/dim]")
         return
 
+    log.debug("deleting %d selected item(s)", len(selected))
     for item in selected:
         if item.path.is_dir():
             shutil.rmtree(item.path, ignore_errors=True)

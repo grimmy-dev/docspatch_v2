@@ -13,11 +13,11 @@ MARKER_OPEN = '<!-- dp:file path="{path}" -->'
 MARKER_CLOSE = "<!-- /dp:file -->"
 PROJECT_OPEN = "<!-- dp:project -->"
 PROJECT_CLOSE = "<!-- /dp:project -->"
-UNIFIED_NAME = "SUMMARY.md"
+UNIFIED_NAME = "CONTEXT.md"
 
 
 def render_project_block(facts: ProjectFacts, overview: ProjectOverviewOutput | None) -> str:
-    """Render the project-level preamble that heads SUMMARY.md.
+    """Render the project-level preamble that heads CONTEXT.md.
 
     Args:
         facts: Deterministic metadata from pyproject.

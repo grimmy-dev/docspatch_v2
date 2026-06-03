@@ -5,7 +5,7 @@ from pathlib import Path
 
 import typer
 
-from docspatch.commands import cleanup, config, docs, init
+from docspatch.commands import cleanup, config, docs, init, readme
 from docspatch.ui.console import err_console
 from docspatch.utils.errors import EXIT_INTERNAL, DocspatchError
 from docspatch.utils.logging import configure_logging, get_logger
@@ -99,6 +99,26 @@ def docs_cmd(
         no_ignore=no_ignore,
     )
     invoke_command(lambda: docs.run(flags), debug, "docs")
+
+
+@app.command("readme")
+def readme_cmd(
+    path: Path | None = readme.PATH_ARG,
+    update: bool = readme.UPDATE_OPTION,
+    check: bool = readme.CHECK_OPTION,
+    remarks: str | None = readme.REMARKS_OPTION,
+    debug: bool = DEBUG_OPTION,
+) -> None:
+    """Generate a path-scoped README from scout summaries.
+
+    Args:
+        path: Directory to scope the README to; repo root when omitted.
+        update: Full rewrite (the default behaviour).
+        check: Report staleness without writing or calling a model.
+        remarks: Extra instruction added to the generation prompt.
+    """
+    flags = readme.ReadmeFlags(path=path, update=update, check=check, remarks=remarks)
+    invoke_command(lambda: readme.run(flags), debug, "readme")
 
 
 @app.command("cleanup")

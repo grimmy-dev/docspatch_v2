@@ -8,8 +8,7 @@ from pathlib import Path
 
 from docspatch.cache import DocsCache
 from docspatch.llm import tier_info
-from docspatch.llm.pricing import estimate_cost
-from docspatch.pipelines.docs.planner import Target, collect_targets
+from docspatch.llm.pricing import DOCS_OUTPUT_RATIO, estimate_cost
 from docspatch.ui import build_table, console, kv_panel
 from docspatch.ui.prompter import Prompter
 from docspatch.utils.errors import ConfigError
@@ -95,6 +94,10 @@ def preview_check(files: list[Path], repo_root: Path, cache: DocsCache, provider
     Returns:
         True if documentation is required for any target.
     """
+    # Deferred: planner pulls libcst via the source module — keep `flags` light
+    # so importing it for RunFlags/validation never pays that cost.
+    from docspatch.pipelines.docs.planner import Target, collect_targets
+
     found = collect_targets(files, repo_root, cache=cache).targets
     if not found:
         console.print("[green]✓[/green] All Python files documented.")
@@ -109,7 +112,7 @@ def preview_check(files: list[Path], repo_root: Path, cache: DocsCache, provider
     total_cost = 0.0
     for rel in sorted(by_file):
         items = by_file[rel]
-        est = estimate_cost(provider, tier, sum(t.token_cost for t in items), output_ratio=0.6)
+        est = estimate_cost(provider, tier, sum(t.token_cost for t in items), output_ratio=DOCS_OUTPUT_RATIO)
         rows.append([rel, str(len(items)), f"~{est.input_tokens:,}", f"${est.total:.4f}"])
         total_fns += len(items)
         total_tokens += est.input_tokens

@@ -1,52 +1,19 @@
 """Implement retryable LLM runnables with usage tracking and validation."""
 
-from dataclasses import dataclass
-
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import Runnable
 from pydantic import ValidationError
 
+from docspatch.llm.usage import TokenUsage
 from docspatch.utils.errors import LLMError, ParseFailed, TransientExhausted
-from docspatch.utils.retry import RateLimitGate, RetryPolicy
+from docspatch.utils.retry import LLM_RETRY, RateLimitGate
 
-LLM_RETRY = RetryPolicy(max_attempts=5, base_delay=60.0, max_delay=300.0)
 TRANSIENT_MARKERS = ("rate_limit", "429", "503", "502", "timeout", "overloaded")
 
 PARSE_RETRY_SUFFIX = "\n\nReturn valid JSON matching the schema exactly. Previous response failed validation."
 _PARSE_ERRORS = (OutputParserException, ValidationError)
 """Schema-validation failures: json mode raises the first, tool-calling the second."""
-
-
-@dataclass(frozen=True)
-class TokenUsage:
-    """Real input/output token counts reported by a provider for one or more calls."""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-    @property
-    def total(self) -> int:
-        """Aggregate the total count of input and output tokens.
-
-        Returns:
-            Sum of tokens.
-        """
-        return self.input_tokens + self.output_tokens
-
-    def __add__(self, other: TokenUsage) -> TokenUsage:
-        """Sum two token usage instances.
-
-        Args:
-            other: Another usage instance.
-
-        Returns:
-            Combined usage.
-        """
-        return TokenUsage(
-            self.input_tokens + other.input_tokens,
-            self.output_tokens + other.output_tokens,
-        )
 
 
 def _collected_usage(handler: UsageMetadataCallbackHandler) -> TokenUsage:

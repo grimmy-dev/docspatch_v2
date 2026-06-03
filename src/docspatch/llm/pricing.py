@@ -5,9 +5,13 @@ from dataclasses import dataclass
 from docspatch.llm.catalogue import tier_info
 from docspatch.utils.errors import ConfigError
 
-# Scout summaries measure ~15% of compressed input across Python files.
-# Callers override per-pipeline (docs/readme generate more).
-DEFAULT_OUTPUT_RATIO = 0.15
+# Output-token fraction of input, per pipeline — measured, independently tunable.
+# Scout: compressed source in, rich structured summaries out → high ratio.
+# Docs: full function source in, moderate docstrings out → a touch lower.
+# (The earlier shared ~0.15 under-projected scout output by 3–4x.)
+SCOUT_OUTPUT_RATIO = 0.6
+DOCS_OUTPUT_RATIO = 0.5
+DEFAULT_OUTPUT_RATIO = SCOUT_OUTPUT_RATIO
 
 
 @dataclass(frozen=True)

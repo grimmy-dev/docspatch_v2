@@ -336,6 +336,33 @@ class PathError(DocspatchError):
         return cls(f"Path matches .docsignore: {path}", hint="Use `--no-ignore` to override.")
 
 
+class ReadmeError(DocspatchError):
+    """README generation cannot proceed with the current inputs."""
+
+    code: ClassVar[str] = "docspatch.readme"
+
+    @classmethod
+    def no_summaries(cls, scope: str) -> ReadmeError:
+        """Create an error when no scoped summaries are available to draw on.
+
+        Args:
+            scope: The requested directory scope.
+        """
+        return cls(
+            f"No summaries found under {scope!r}.",
+            hint="Run `dp init` or `dp docs` first so docspatch can scout the code.",
+        )
+
+    @classmethod
+    def not_a_directory(cls, path: str) -> ReadmeError:
+        """Create an error when a file path is passed where a directory is required.
+
+        Args:
+            path: The offending path.
+        """
+        return cls(f"readme operates on directories, not files: {path}", hint="Pass a directory or omit the path for the repo root.")
+
+
 class LockError(DocspatchError):
     """Another docs run holds the per-repo lock."""
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from docspatch.cache import ScoutCache
 from docspatch.llm import LLMClient, TokenUsage
 from docspatch.llm.catalogue import tier_info
-from docspatch.llm.pricing import estimate_cost
+from docspatch.llm.pricing import SCOUT_OUTPUT_RATIO, estimate_cost
 from docspatch.pipelines.scout.graph import run_scout
 from docspatch.pipelines.scout.overview import read_overview, synthesize_overview, write_overview
 from docspatch.pipelines.scout.planner import plan_uncached
@@ -18,8 +18,11 @@ from docspatch.ui.retry_display import RetryDisplay
 from docspatch.utils.config import ConfigStore
 from docspatch.utils.errors import PathError
 from docspatch.utils.ignore import load_docsignore
+from docspatch.utils.logging import get_logger
 from docspatch.utils.scope import discover_targets
 from docspatch.utils.switcher import offer_switch
+
+log = get_logger("scout.pipeline")
 
 
 def pre_build(
@@ -39,11 +42,13 @@ def pre_build(
     """
     with status("Scanning tracked files..."):
         paths = tracked_paths(repo_root)
+    log.debug("scout: %d tracked file(s)", len(paths))
     if not paths:
         return
 
     with status("Checking which files changed..."):
         scan = plan_uncached(paths, ctx_store)
+    log.debug("scout plan: %d changed, %d cached", scan.uncached_count, scan.cached_count)
 
     if scan.all_current:
         console.print("[dim]Context already up to date — skipping scout.[/dim]")
@@ -58,9 +63,10 @@ def pre_build(
         console.print("[dim]Scout skipped.[/dim]")
         return
 
+    log.debug("scout: running pre-build on %d file(s)", scan.uncached_count)
     result = execute(ctx_store, store, provider, api_key, scan, p)
     # Files changed, so the cached overview is stale. Synthesize before any write:
-    # on failure this raises and SUMMARY.md is left untouched.
+    # on failure this raises and CONTEXT.md is left untouched.
     overview, overview_usage = refresh_overview(repo_root, ctx_store, paths, provider, api_key)
     with status("Writing context summary..."):
         write_unified(ctx_store, paths, repo_root, overview)
@@ -125,7 +131,7 @@ def print_estimate(provider: str, scan: ScanPlan) -> None:
         scan: The plan detailing files to be scouted.
     """
     fast_info = tier_info(provider, "fast")
-    est = estimate_cost(provider, "fast", scan.token_estimate)
+    est = estimate_cost(provider, "fast", scan.token_estimate, output_ratio=SCOUT_OUTPUT_RATIO)
     console.print(
         cost_panel(
             "Scout pre-build estimate",

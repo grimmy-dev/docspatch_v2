@@ -28,7 +28,10 @@ from docspatch.pipelines.docs.state import DocsResult, FinalizeResult, Generated
 from docspatch.pipelines.fanout import load_state
 from docspatch.ui import Prompter, cache_hit_row, console, cost_rows, progress_bar, render_summary
 from docspatch.ui.retry_display import RetryDisplay
+from docspatch.utils.logging import get_logger
 from docspatch.utils.secrets import scrub
+
+log = get_logger("docs.pipeline")
 
 
 def scrub_for_manifest(exc: BaseException) -> str:
@@ -132,6 +135,7 @@ async def run_docs(
     """
     flags = flags or RunFlags()
     rid = run_id or make_run_id()
+    log.debug("run_docs: run_id=%s paths=%d provider=%s tier=%s", rid, len(paths), provider, tier)
     started = time.monotonic()
     db_path = docs_db_path(repo_root)
     checkpoint_dir = db_path.parent
@@ -210,6 +214,7 @@ async def run_docs(
             cache_hits = plan_state.get("cache_hits", 0)
             scanned = cache_hits + len(plan_state["targets"])
             manifest.files_scanned = scanned
+            log.debug("plan: %d target(s), %d cache hit(s), resume=%s", len(plan_state["targets"]), cache_hits, is_resume)
 
             # Only generate targets without a docstring already in the checkpoint —
             # a resumed run reuses what the prior run produced, no LLM re-call.
@@ -221,6 +226,7 @@ async def run_docs(
             if missing:
                 offset = max(existing.get("completed_batches", []), default=-1) + 1
                 batches = batch_targets(ctx, missing, offset)
+                log.debug("generating %d docstring(s) across %d batch(es)", len(missing), len(batches))
                 with progress_bar(total=len(missing), description="Generating docstrings") as bar:
                     ctx.advance = bar
                     if retry_display is not None:
@@ -243,6 +249,7 @@ async def run_docs(
                 return DocsResult(functions_documented=0, files_documented=0, batches=batch_count)
 
             outcome = await drive_finalize(ctx, saver, review_handler, entries)
+            log.debug("finalize: committed=%d aborted=%s error=%s", len(outcome.committed), outcome.aborted, bool(outcome.error))
             await saver.adelete_thread(rid)
             usage = ledger.totals()
             elapsed = time.monotonic() - started
@@ -289,5 +296,6 @@ async def run_docs(
         )
     except BaseException as exc:
         manifest.errors.append(scrub_for_manifest(exc))
+        log.debug("run_docs failed: %s", scrub_for_manifest(exc))
         finalize("error")
         raise

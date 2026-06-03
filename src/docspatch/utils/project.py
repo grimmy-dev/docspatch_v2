@@ -71,6 +71,27 @@ def project_facts(repo_root: Path) -> ProjectFacts:
     return ProjectFacts(name=name, description=field_str("description"), labelled=labelled)
 
 
+def project_dependencies(repo_root: Path) -> list[str]:
+    """Return the declared runtime dependencies from pyproject, or an empty list.
+
+    Kept separate from :class:`ProjectFacts` so dependency lines feed the README
+    prompt without ever appearing in the CONTEXT.md preamble.
+
+    Args:
+        repo_root: The repository root containing pyproject.toml.
+
+    Returns:
+        The dependency strings exactly as declared, or empty when absent.
+    """
+    pyproject = repo_root / "pyproject.toml"
+    try:
+        project = tomllib.loads(pyproject.read_text()).get("project", {})
+    except (tomllib.TOMLDecodeError, OSError):
+        return []
+    deps = project.get("dependencies", [])
+    return [str(d) for d in deps] if isinstance(deps, list) else []
+
+
 def get_dir_tree(root: Path, max_depth: int = 3) -> str:
     """Return a text directory tree up to max_depth levels deep.
 

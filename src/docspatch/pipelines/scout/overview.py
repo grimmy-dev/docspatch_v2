@@ -1,4 +1,4 @@
-"""Synthesize and persist the project-level overview that heads SUMMARY.md.
+"""Synthesize and persist the project-level overview that heads CONTEXT.md.
 
 The overview is one LLM pass over the per-file summaries scout already produced
 — it is never rebuilt from source. It is cached so unchanged runs pay nothing.

@@ -31,6 +31,11 @@ class RetryPolicy:
         return min(self.base_delay * (2**attempt), self.max_delay)
 
 
+# Shared LLM rate-limit policy. Lives here (not in the langchain-backed runnable)
+# so light consumers like the retry display can read it without the SDK import.
+LLM_RETRY = RetryPolicy(max_attempts=5, base_delay=60.0, max_delay=300.0)
+
+
 class RateLimitGate:
     """Single shared backoff for any number of concurrent retriable calls.
 

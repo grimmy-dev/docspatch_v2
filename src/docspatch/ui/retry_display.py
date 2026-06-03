@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from docspatch.llm.client import LLM_RETRY
+from docspatch.utils.retry import LLM_RETRY
 
 
 class RetryDisplay:

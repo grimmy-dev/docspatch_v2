@@ -201,7 +201,7 @@ class ComponentNote(BaseModel):
 
 
 class ProjectOverviewOutput(BaseModel):
-    """Project-level synthesis built from every file summary. Codebase context, top of SUMMARY.md."""
+    """Project-level synthesis built from every file summary. Codebase context, top of CONTEXT.md."""
 
     summary: str = Field(description="One paragraph: what the project does and who uses it.")
     architecture: str = Field(
@@ -211,6 +211,12 @@ class ProjectOverviewOutput(BaseModel):
         default_factory=list,
         description="Major subsystems, each with a one-line role. Group at the package/pipeline level, not per file.",
     )
+
+
+class ReadmeOutput(BaseModel):
+    """A whole README rendered as a single markdown document."""
+
+    markdown: str = Field(description="The complete README in GitHub-flavoured markdown. No code fences around the whole document.")
 
 
 class ArgDoc(BaseModel):

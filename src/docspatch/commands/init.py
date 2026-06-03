@@ -3,9 +3,7 @@
 from pathlib import Path
 
 from docspatch.cache import ScoutCache
-from docspatch.llm import validate_api_key
-from docspatch.pipelines.scout.pipeline import pre_build
-from docspatch.ui import Prompter, QuestionaryPrompter, console
+from docspatch.ui import Prompter, QuestionaryPrompter, console, status
 from docspatch.utils.config import ConfigStore, default_store
 from docspatch.utils.ignore import ensure_docspatch_ignored
 from docspatch.utils.logging import get_logger
@@ -31,6 +29,11 @@ def run(
     repo_root = repo_root or Path.cwd()
     p = prompter or QuestionaryPrompter()
     store = resolve_store(repo_root, global_config_path)
+
+    # Deferred so a bare `dp`/`--help` never pays the provider-SDK import cost.
+    with status("Starting up…"):
+        from docspatch.llm import validate_api_key
+        from docspatch.pipelines.scout.pipeline import pre_build
 
     log.debug("init starting for repo: %s", repo_root)
     selections = ensure_configured(store, p, validate_api_key, reconfigure=reconfigure)

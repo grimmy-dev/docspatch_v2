@@ -1,4 +1,4 @@
-"""Unified SUMMARY.md: project preamble + dir-grouped render with path markers, no LLM."""
+"""Unified CONTEXT.md: project preamble + dir-grouped render with path markers, no LLM."""
 
 from pathlib import Path
 
@@ -65,7 +65,7 @@ def test_write_unified_writes_file_from_cache(tmp_path: Path) -> None:
     cache = ScoutCache(tmp_path)
     cache.set("src/x.py", FileSummary(path="src/x.py", summary="does x"))
     out_path = write_unified(cache, ["src/x.py"], tmp_path, None)
-    assert out_path == tmp_path / ".docspatch" / "SUMMARY.md"
+    assert out_path == tmp_path / ".docspatch" / "CONTEXT.md"
     text = out_path.read_text()
     assert "<!-- dp:project -->" in text
     assert '<!-- dp:file path="src/x.py" -->' in text
