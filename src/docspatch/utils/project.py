@@ -71,6 +71,85 @@ def project_facts(repo_root: Path) -> ProjectFacts:
     return ProjectFacts(name=name, description=field_str("description"), labelled=labelled)
 
 
+def _read_project_table(repo_root: Path) -> dict:
+    """Return the ``[project]`` table from pyproject, or empty on any error.
+
+    Returns:
+        The parsed project table, empty when the file is missing or malformed.
+    """
+    try:
+        return tomllib.loads((repo_root / "pyproject.toml").read_text()).get("project", {})
+    except (tomllib.TOMLDecodeError, OSError):
+        return {}
+
+
+def entry_point_targets(repo_root: Path) -> set[str]:
+    """Return the dotted module of every declared entry point.
+
+    Covers ``[project.scripts]``, ``[project.gui-scripts]``, and every
+    ``[project.entry-points.*]`` group. The module is the part before ``:`` in a
+    ``module:attr`` object reference; these modules are always README-relevant
+    (the S1 deterministic floor behind the missing-command guarantee).
+
+    Args:
+        repo_root: The repository root containing pyproject.toml.
+
+    Returns:
+        The set of dotted module names, empty when no entry points are declared.
+    """
+    project = _read_project_table(repo_root)
+    refs: list[str] = []
+    refs += list(project.get("scripts", {}).values())
+    refs += list(project.get("gui-scripts", {}).values())
+    for group in project.get("entry-points", {}).values():
+        if isinstance(group, dict):
+            refs += list(group.values())
+    return {ref.split(":", 1)[0].strip() for ref in refs if isinstance(ref, str) and ref}
+
+
+def entry_point_commands(repo_root: Path) -> list[str]:
+    """Return the names of every declared console/GUI script, sorted.
+
+    These are the commands a user types — the README is expected to document
+    them. A project that declares none (a library, a web service started by a
+    framework runner) yields an empty list, which makes the coverage gate a
+    no-op rather than a false failure.
+
+    Args:
+        repo_root: The repository root containing pyproject.toml.
+
+    Returns:
+        The sorted script names, empty when none are declared.
+    """
+    project = _read_project_table(repo_root)
+    names = {*project.get("scripts", {}), *project.get("gui-scripts", {})}
+    return sorted(names)
+
+
+def is_entry_point_path(path: str, modules: set[str]) -> bool:
+    """Report whether a repo-relative path implements one of the entry-point modules.
+
+    A dotted module ``pkg.cli`` matches the file ``…/pkg/cli.py`` or the package
+    ``…/pkg/cli/__init__.py``, regardless of a ``src/`` prefix — the match is on
+    the path suffix so any src-layout resolves.
+
+    Args:
+        path: A repo-relative source path from a summary.
+        modules: Dotted entry-point modules from :func:`entry_point_targets`.
+
+    Returns:
+        True when the path is the target of a declared entry point.
+    """
+    rel = path.replace("\\", "/")
+    for module in modules:
+        stem = module.replace(".", "/")
+        if rel == f"{stem}.py" or rel.endswith(f"/{stem}.py"):
+            return True
+        if rel == f"{stem}/__init__.py" or rel.endswith(f"/{stem}/__init__.py"):
+            return True
+    return False
+
+
 def project_dependencies(repo_root: Path) -> list[str]:
     """Return the declared runtime dependencies from pyproject, or an empty list.
 

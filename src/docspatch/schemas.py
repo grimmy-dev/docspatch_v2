@@ -211,6 +211,15 @@ class ProjectOverviewOutput(BaseModel):
         default_factory=list,
         description="Major subsystems, each with a one-line role. Group at the package/pipeline level, not per file.",
     )
+    file_tiers: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-file README relevance, keyed by the file path exactly as given. "
+            "Value is 'public' if a README for this project would mention the module "
+            "(entry points, CLI commands, public API) or 'internal' for plumbing a "
+            "README never documents. Judge across CLI, library, and service alike."
+        ),
+    )
 
 
 class ReadmeOutput(BaseModel):

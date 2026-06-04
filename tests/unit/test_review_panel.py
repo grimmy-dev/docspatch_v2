@@ -305,7 +305,7 @@ def test_build_code_truncates_long_body() -> None:
     body = "def foo():\n" + "\n".join(f"    x{i} = {i}" for i in range(120))
     syntax = build_code(preview=Preview(code=body, start_line=1))
     out = render_str(syntax, width=80)
-    assert "more body lines" in out
+    assert "more lines" in out
 
 
 def test_build_code_keeps_signature_and_docstring_visible() -> None:
@@ -318,17 +318,35 @@ def test_build_code_keeps_signature_and_docstring_visible() -> None:
 def test_build_code_no_footer_when_short() -> None:
     short = "def foo():\n    return 1\n"
     out = render_str(build_code(preview=Preview(code=short, start_line=1)), width=80)
-    assert "more body lines" not in out
+    assert "more lines" not in out
 
 
 def test_build_code_respects_max_lines_override() -> None:
     body = "\n".join(f"line{i}" for i in range(20))
     out = render_str(build_code(preview=Preview(code=body, start_line=1), max_lines=5), width=80)
-    assert "more body lines" in out
+    assert "more lines" in out
 
 
 def test_max_code_lines_is_50() -> None:
     assert MAX_CODE_LINES == 50
+
+
+def test_build_code_shows_added_docstring_as_diff() -> None:
+    # before = bare signature, after = signature + docstring → docstring is added.
+    preview = Preview(code='def foo():\n    """New doc."""', start_line=1, before="def foo():")
+    out = render_str(build_code(preview=preview), width=80)
+    assert "+" in out and "New doc." in out
+
+
+def test_build_file_previews_capture_unpatched_baseline(tmp_path: Path) -> None:
+    src = tmp_path / "mod.py"
+    src.write_text("def foo():\n    return 1\n")
+    entry = ReviewEntry(rel="mod.py", qualname="foo", docstring="Fresh doc.")
+    preview = build_file_previews(tmp_path, "mod.py", [entry])[("mod.py", "foo")]
+    # Baseline holds the signature without a docstring; the patched slice adds it.
+    assert "Fresh doc." not in preview.before
+    assert "def foo" in preview.before
+    assert "Fresh doc." in preview.code
 
 
 def test_parse_failed_panel_shows_raw_output() -> None:

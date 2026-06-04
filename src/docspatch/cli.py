@@ -113,7 +113,7 @@ def readme_cmd(
 
     Args:
         path: Directory to scope the README to; repo root when omitted.
-        update: Full rewrite (the default behaviour).
+        update: Rewrite from scratch instead of refreshing in place.
         check: Report staleness without writing or calling a model.
         remarks: Extra instruction added to the generation prompt.
     """

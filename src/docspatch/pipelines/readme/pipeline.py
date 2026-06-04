@@ -5,7 +5,7 @@ from pathlib import Path
 
 from docspatch.cache import ScoutCache
 from docspatch.pipelines.readme.generator import ReadmeGenerator
-from docspatch.pipelines.readme.markers import select, under_scope
+from docspatch.pipelines.readme.markers import internal_module_names, readme_view, under_scope
 from docspatch.pipelines.readme.prompts import ReadmeContext
 from docspatch.pipelines.readme.state import ReadmeResult
 from docspatch.pipelines.scout.overview import read_overview
@@ -18,7 +18,12 @@ from docspatch.utils.config import ConfigStore
 from docspatch.utils.errors import ReadmeError
 from docspatch.utils.fs import atomic_write
 from docspatch.utils.logging import get_logger
-from docspatch.utils.project import get_dir_tree, project_dependencies, project_facts
+from docspatch.utils.project import (
+    entry_point_commands,
+    get_dir_tree,
+    project_dependencies,
+    project_facts,
+)
 
 log = get_logger("readme.pipeline")
 
@@ -56,27 +61,41 @@ def ensure_scope_fresh(
         write_unified(ctx_store, tracked, repo_root, read_overview(repo_root))
 
 
-def _build_context(repo_root: Path, scope: str, out_path: Path, remarks: str | None) -> ReadmeContext:
+def _build_context(
+    repo_root: Path,
+    scope: str,
+    existing: str | None,
+    remarks: str | None,
+    project_overview: str | None,
+    summary_text: str,
+    rewrite: bool = False,
+) -> ReadmeContext:
     """Resolve the facts, tree, and existing README a prompt draws on.
 
     Args:
         repo_root: The repository root.
         scope: The repo-relative directory the README covers.
-        out_path: Where the README will be written (read for tone if present).
+        existing: The current README, fed in both modes so curated sections survive.
         remarks: Optional run-wide instruction.
+        project_overview: Scout's project synthesis, already null for a subpackage.
+        summary_text: The unified CONTEXT.md, source of the internal-module names.
+        rewrite: Allow free restructuring rather than a verbatim in-place refresh.
 
     Returns:
         The assembled README context.
     """
     is_root = scope in _ROOT_SCOPES
     tree_root = repo_root if is_root else repo_root / scope
-    existing = out_path.read_text() if out_path.exists() else None
     return ReadmeContext(
         scope=scope,
         dir_tree=get_dir_tree(tree_root),
         facts=project_facts(repo_root) if is_root else None,
         dependencies=tuple(project_dependencies(repo_root)) if is_root else (),
+        entry_points=tuple(entry_point_commands(repo_root)) if is_root else (),
+        internal_modules=tuple(internal_module_names(summary_text, scope)) if is_root else (),
         existing_readme=existing,
+        rewrite=rewrite,
+        project_overview=project_overview,
         remarks=remarks,
     )
 
@@ -91,6 +110,7 @@ async def generate_readme(
     remarks: str | None,
     provider: str,
     tier: str,
+    rewrite: bool = False,
 ) -> ReadmeResult:
     """Draft the README from scoped summaries, review it, and write on accept.
 
@@ -103,6 +123,8 @@ async def generate_readme(
         remarks: Optional run-wide instruction.
         provider: LLM provider, for the cost panel.
         tier: Generator tier, for the cost panel.
+        rewrite: Write a fresh README from the summaries instead of revising the
+            existing one in place. The current file still feeds the review diff.
 
     Returns:
         The run outcome, including whether the file was written.
@@ -113,17 +135,23 @@ async def generate_readme(
     summary_path = repo_root / ".docspatch" / UNIFIED_NAME
     if not summary_path.exists():
         raise ReadmeError.no_summaries(scope)
-    doc = select(summary_path.read_text(), scope)
+    summary_text = summary_path.read_text()
+    doc = readme_view(summary_text, scope)
     if not doc.files:
         raise ReadmeError.no_summaries(scope)
     log.debug("scoped summary: %d block(s) under %s", len(doc.files), scope)
 
-    ctx = _build_context(repo_root, scope, out_path, remarks)
+    on_disk = out_path.read_text() if out_path.exists() else None
+    # doc.project is the synthesized architecture/components narrative; select()
+    # already nulls it outside root scope, so a subpackage README never sees it.
+    # Both modes stay anchored to the existing file; rewrite only loosens how
+    # freely the prompt may restructure it (see _existing_block).
+    ctx = _build_context(repo_root, scope, on_disk, remarks, doc.project, summary_text, rewrite)
 
     async def regenerate(feedback: tuple[str, ...]):
         return await generator.generate(replace(ctx, feedback=feedback), doc.files)
 
-    result = await review_readme(prompter, regenerate)
+    result = await review_readme(prompter, regenerate, existing=on_disk)
     if result.accepted and result.markdown is not None:
         atomic_write(out_path, result.markdown.rstrip("\n") + "\n")
         console.print(f"[green]✓[/green] Wrote {out_path}")

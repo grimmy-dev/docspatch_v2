@@ -1,18 +1,18 @@
 """Manage the interactive review session for generated docstrings."""
 
 import ast
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from rich import box
 from rich.console import Group, RenderableType
-from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
 from docspatch.source import MODULE_QUALNAME, DocstringInsert, FunctionNode, insert_docstrings
 from docspatch.ui.console import console, terminal_size
+from docspatch.ui.diff import render_diff
 from docspatch.ui.prompter import Prompter
 
 SIDEBAR_MIN_WIDTH = 100
@@ -143,13 +143,16 @@ def prompt_conflict(prompter: Prompter, file: str) -> dict:
 class Preview:
     """Patched source slice for one entry, plus the line where the signature begins.
 
-    ``doc_lines`` is the inclusive absolute line range of the inserted docstring,
-    used to highlight exactly what changed; None when it cannot be resolved.
+    ``before`` is the same slice from the unpatched source, so the review can show
+    a red/green diff: inserted docstring lines added (green), a replaced one's old
+    text removed (red). ``doc_lines`` is the inclusive absolute range of the
+    inserted docstring; None when it cannot be resolved.
     """
 
     code: str
     start_line: int
     doc_lines: tuple[int, int] | None = None
+    before: str = ""
 
 
 def review_session(
@@ -511,34 +514,25 @@ def build_parse_fail_body(entry: ReviewEntry) -> RenderableType:
     )
 
 
-def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Syntax:
-    """Highlight the code snippet with the new docstring.
+def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Text:
+    """Render the change as a red/green diff: added lines green, context dim.
 
     Args:
-        preview: Code object.
+        preview: The unpatched and patched slices for one entry.
+        max_lines: Hard cap on rendered rows before a truncation footer.
 
     Returns:
-        Syntax-highlighted display component.
+        The diff view, head-sliced when it overflows the cap.
     """
-    raw = preview.code or "# (preview unavailable)"
-    lines = raw.splitlines()
+    diff = render_diff(preview.before, preview.code or "# (preview unavailable)")
+    lines = [ln for ln in diff.split("\n") if str(ln)]
     if len(lines) > max_lines:
-        # Reserve 1 row for the truncation marker; signature+docstring are
-        # at the top of preview.code so a head slice keeps them intact.
+        # Head slice: signature+docstring sit at the top of the slice, so the
+        # change stays visible; reserve one row for the truncation footer.
         kept = lines[: max_lines - 1]
-        elided = len(lines) - len(kept)
-        raw = "\n".join([*kept, f"# ▾ {elided} more body lines"])
-    # Highlight the inserted docstring so the reviewer sees exactly what changed.
-    highlight = set(range(preview.doc_lines[0], preview.doc_lines[1] + 1)) if preview.doc_lines else set()
-    return Syntax(
-        raw,
-        "python",
-        line_numbers=True,
-        start_line=preview.start_line,
-        word_wrap=True,
-        background_color="default",
-        highlight_lines=highlight,
-    )
+        kept.append(Text(f"# ▾ {len(lines) - len(kept)} more lines", style="dim"))
+        lines = kept
+    return Text("\n").join(lines)
 
 
 def build_explorer(files: list[str], *, current: str, max_lines: int | None = None) -> Tree:
@@ -666,12 +660,17 @@ def build_file_previews(repo_root: Path, rel: str, group: list[ReviewEntry]) -> 
     path = repo_root / rel
     if not group or not path.exists():
         return {}
-    patched = patch_file(path.read_text(), group)
+    source = path.read_text()
+    patched = patch_file(source, group)
     out: dict[tuple[str, str], Preview] = {}
     for entry in group:
         preview = extract_signature_and_docstring(patched, entry.qualname)
-        if preview is not None:
-            out[(entry.rel, entry.qualname)] = preview
+        if preview is None:
+            continue
+        # The same slice from the unpatched source is the diff baseline: empty
+        # for newly documented code, the old docstring on an --update rewrite.
+        original = extract_signature_and_docstring(source, entry.qualname)
+        out[(entry.rel, entry.qualname)] = replace(preview, before=original.code if original else "")
     return out
 
 

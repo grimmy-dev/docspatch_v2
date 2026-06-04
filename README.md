@@ -1,87 +1,105 @@
 # docspatch
 
-AI-powered documentation generation for Python projects. `docspatch` finds
-undocumented functions, classes, and modules, generates Google-style docstrings
-with an LLM, and inserts them into your source without touching surrounding code.
+docspatch automates the generation and maintenance of Python docstrings and README files by synchronizing documentation with your evolving code logic.
 
-The CLI is `dp`.
+It parses your source code using LibCST to inject Google-style docstrings into undocumented functions and classes while preserving your existing formatting. It also synthesizes project-level READMEs by scouting your codebase's architecture and public interfaces. Every change is presented as a visual diff for human-in-the-loop approval before any files are modified on disk.
 
 ## Requirements
 
 - Python >= 3.14
-- An API key for one of: Anthropic, OpenAI, or Google (Gemini)
+- An API key for Anthropic, OpenAI, or Google (Gemini)
 
 ## Install
 
-This project uses [uv](https://docs.astral.sh/uv/) for all package management.
+This project uses [uv](https://docs.astral.sh/uv/) for package management.
 
 ```bash
 uv sync
 ```
 
-## Quick start
+## Quick Start
+
+Initialize your project to configure a provider and perform the first codebase scan, then generate documentation:
 
 ```bash
-uv run dp init          # configure provider + API key for this repo
-uv run dp docs          # document the whole repo
+uv run dp init          # Configure provider, API key, and scan codebase
+uv run dp docs          # Add Google-style docstrings to undocumented code
+uv run dp readme        # Generate or refresh README.md from codebase context
 ```
+
+## How it works
+
+docspatch follows a reactive pipeline architecture driven by Typer and LangGraph. It operates in two distinct phases: scouting and generation. 
+
+1.  **Scouting**: The `scout` pipeline summarizes the state and architecture of your files into a unified project-level map stored in `.docspatch/CONTEXT.md`. This pass is cached; unchanged files are not re-analyzed.
+2.  **Generation**: The `docs` and `readme` pipelines consume this context. They utilize asynchronous LLM nodes to plan and generate content, which is then validated against your code's AST. 
+
+All execution state is persisted to a local SQLite checkpoint, allowing you to interrupt and resume long-running operations without losing progress or redundant API costs.
 
 ## Commands
 
-| Command | What it does |
-|---------|--------------|
-| `dp init` | Configure docspatch in the current repo (provider, API key, models). |
-| `dp docs [PATHS]` | Generate docstrings for undocumented code in the given files or directories (whole repo when omitted). |
-| `dp cleanup` | Interactively remove docspatch artefacts. |
-| `dp config` | Show the merged config. |
-| `dp config set KEY VALUE` | Set a single config key (scope inferred from the key). |
+| Command | Description |
+| :--- | :--- |
+| `dp init` | Bootstraps the repo, validates API credentials, and runs the initial scout scan. |
+| `dp docs [PATHS]` | Generates docstrings for functions, classes, and modules in the target paths. |
+| `dp readme [PATH]` | Creates or refreshes a README.md scoped to the given directory or the repo root. |
+| `dp config` | Displays the merged configuration from global and local stores. |
+| `dp cleanup` | Interactively audits and removes caches, checkpoints, and metadata. |
 
-### `dp docs` flags
+### Documenting Code
 
-| Flag | Effect |
-|------|--------|
-| `--check` | Preview what needs docs; write nothing. |
-| `--update` | Regenerate docstrings that already exist, widening scope. |
-| `--remarks TEXT` | Run-wide instruction injected into every prompt (e.g. `"Use British spelling."`). |
-| `--resume` | Continue the most recent interrupted run from its checkpoint. |
-| `--no-ignore` | Ignore `.docsignore` rules for this run. |
-| `--debug` | Trace every step and print full tracebacks. |
+The `dp docs` command scans for missing docstrings and inserts them using Google-style formatting. It avoids reformatting surrounding code and requests approval for every change.
 
 ```bash
-uv run dp docs src/                # everything under src/
-uv run dp docs src/app.py          # a single file
-uv run dp docs --check src/        # preview only
-uv run dp docs --resume            # continue an interrupted run
+uv run dp docs src/                # Document everything in the src directory
+uv run dp docs --check             # Report missing docstrings without writing
+uv run dp docs --update --resume   # Refresh existing docs and continue an interrupted run
 ```
+
+- `PATHS`: Target files or directories. Defaults to the entire repository.
+- `--check`: Validates changes and exits without writing.
+- `--update`: Overwrites existing docstrings instead of skipping them.
+- `--remarks TEXT`: Adds custom instructions (e.g., "Use concise language") to the generator.
+- `--resume`: Continues from the last checkpointed run in the SQLite ledger.
+- `--no-ignore`: Forces the runner to ignore patterns defined in `.docsignore`.
+
+### Generating READMEs
+
+Use `dp readme` to maintain documentation based on the architectural summaries produced by the scout pass. It manages content scope using markers to refresh only specific sections by default.
+
+```bash
+uv run dp readme                   # Refresh the root README.md
+uv run dp readme src/pkg/ --update # Rewrite a package-specific README from scratch
+```
+
+- `PATH`: Directory to scope the README to; repo root when omitted.
+- `--update`: Performs a full rewrite from scratch instead of an in-place refresh.
+- `--check`: Reports if the README is stale relative to the codebase without calling the LLM.
 
 ## Configuration
 
-Config is layered: built-in defaults < global (`~`) < repo (`.docspatch/`). The
-scope of a key is inferred — secrets and machine-wide settings go global, project
-settings go repo-local. API keys are masked in all output and error text.
+Settings are merged from built-in defaults, your global user config, and the local `.docspatch/` directory. Secrets like `api_key` are stored with restricted permissions.
 
-| Key | Meaning |
-|-----|---------|
-| `provider` | `anthropic`, `openai`, or `gemini`. |
-| `api_key` | Provider API key (stored with owner-only permissions). |
-| `generator_model` | Model used to write docstrings. |
-| `scout_model` | Cheaper model used to scout/summarise code. |
-| `tone` | Docstring tone (e.g. `professional`). |
-| `batch_token_limit` | Max tokens per batched LLM call. |
+| Key | Purpose |
+| :--- | :--- |
+| `provider` | The LLM provider (`anthropic`, `openai`, or `gemini`). |
+| `api_key` | Credential for the selected provider. |
+| `generator_model` | The model used for writing docstrings and markdown. |
+| `scout_model` | A typically cheaper model used for summarizing file logic. |
+| `tone` | The writing style for generated content (e.g., `professional`). |
+| `batch_token_limit` | Maximum tokens processed per batched LLM request. |
 
 ```bash
 uv run dp config set provider anthropic
-uv run dp config set api_key sk-...
+uv run dp config set tone technical
 ```
-
-Model tiers map to `fast`, `balanced`, and `best`.
 
 ## Development
 
 ```bash
-uv run pytest          # tests
-uv run ruff check      # lint
-uv run mypy src        # type-check
+uv run pytest          # Run integration and unit tests
+uv run ruff check      # Lint code
+uv run mypy src        # Verify type safety
 ```
 
 ## License

@@ -21,7 +21,9 @@ from docspatch.utils.selection import ensure_configured
 log = get_logger("readme")
 
 PATH_ARG = typer.Argument(None, help="Directory to scope the README to (repo-relative). Omit for the repo root.")
-UPDATE_OPTION = typer.Option(False, "--update", help="Full rewrite of the README (the default behaviour).")
+UPDATE_OPTION = typer.Option(
+    False, "--update", help="Rewrite the README from scratch instead of refreshing it in place."
+)
 CHECK_OPTION = typer.Option(False, "--check", help="Report whether the README is stale; write nothing, no model calls.")
 REMARKS_OPTION = typer.Option(None, "--remarks", help="Extra instruction added to the generation prompt.")
 
@@ -135,6 +137,7 @@ def run(flags: ReadmeFlags, prompter: Prompter | None = None) -> None:
                 remarks=flags.remarks,
                 provider=selections.provider,
                 tier=tier,
+                rewrite=flags.update,
             )
         )
     log.debug("readme finished: written=%s", result.written)
