@@ -1,128 +1,93 @@
-"""README generator: partition coverage and single vs refine-fold dispatch."""
+"""README generator: single-call dispatch and quality-gate auto-revision."""
 
 import pytest
 
 from docspatch.llm import TokenUsage
-from docspatch.pipelines.readme.generator import LLMReadmeGenerator, partition
-from docspatch.pipelines.readme.markers import FileBlock
-from docspatch.pipelines.readme.prompts import ReadmeContext
+from docspatch.pipelines.readme.generator import LLMReadmeGenerator
+from docspatch.pipelines.readme.state import PreContext
 from docspatch.schemas import ReadmeOutput
+from docspatch.utils.project import ProjectFacts
 
 
-def _blocks(n, body="word " * 20):
-    return [FileBlock(path=f"src/d{i}/m{i}.py", body=f"## m{i}.py\n{body}") for i in range(n)]
-
-
-def _ctx():
-    return ReadmeContext(scope=".", dir_tree="src")
-
-
-def _ctx_with_identity():
-    from docspatch.utils.project import ProjectFacts
-
-    return ReadmeContext(scope=".", dir_tree="src", facts=ProjectFacts(name="demo"))
+def make_pre() -> PreContext:
+    return PreContext(
+        scope=".",
+        tagged_tree="src",
+        facts=ProjectFacts(name="demo"),
+        dependencies=(),
+        entry_points=(),
+        entry_point_modules=frozenset(),
+        tool_defs="",
+    )
 
 
 class _FakeChain:
-    def __init__(self):
+    def __init__(self) -> None:
         self.prompts: list[str] = []
 
-    async def ainvoke(self, prompt):
+    async def ainvoke(self, prompt: str):  # noqa: ANN201
         self.prompts.append(prompt)
-        # A valid titled README so the deterministic quality gate stays quiet and
-        # these tests measure only partition + dispatch, not auto-revision.
-        return ReadmeOutput(markdown=f"# Title\n\nDOC{len(self.prompts)}"), TokenUsage(10, 5)
+        return ReadmeOutput(markdown=f"# demo\n\nDOC{len(self.prompts)}"), TokenUsage(10, 5)
 
 
 class _FakeClient:
-    def __init__(self, chain):
+    def __init__(self, chain) -> None:
         self._chain = chain
 
-    def with_structured_output(self, schema):
+    def with_structured_output(self, schema: type):  # noqa: ANN201
         return self._chain
 
 
-def test_partition_covers_every_block():
-    blocks = _blocks(12)
-    plan = partition(blocks, limit=50)
-    seen = [b.path for batch in plan.batches for b in batch.items]
-    assert sorted(seen) == sorted(b.path for b in blocks)
-    assert plan.batch_count > 1  # the slice exceeds one batch
-
-
-def test_partition_single_batch_when_small():
-    plan = partition(_blocks(2), limit=100_000)
-    assert plan.batch_count == 1
-
-
 @pytest.mark.asyncio
-async def test_single_call_under_limit():
+async def test_single_call_passes_quality_gate() -> None:
     chain = _FakeChain()
-    gen = LLMReadmeGenerator(_FakeClient(chain), batch_token_limit=100_000)
-    markdown, usage = await gen.generate(_ctx(), _blocks(3))
+    gen = LLMReadmeGenerator(_FakeClient(chain))
+    markdown, usage = await gen.generate(pre=make_pre(), woven="ctx", existing_readme=None, feedback=None)
     assert "DOC1" in markdown
     assert len(chain.prompts) == 1
     assert usage == TokenUsage(10, 5)
 
 
 @pytest.mark.asyncio
-async def test_refine_fold_above_limit_sums_usage():
+async def test_existing_readme_and_feedback_reach_the_prompt() -> None:
     chain = _FakeChain()
-    gen = LLMReadmeGenerator(_FakeClient(chain), batch_token_limit=50)
-    blocks = _blocks(12)
-    plan = partition(blocks, limit=50)
-    markdown, usage = await gen.generate(_ctx(), blocks)
-    # One seed call plus one refine call per remaining batch — no separate reduce.
-    assert len(chain.prompts) == plan.batch_count
-    assert usage == TokenUsage(10 * plan.batch_count, 5 * plan.batch_count)
-    assert f"DOC{plan.batch_count}" in markdown
-
-
-@pytest.mark.asyncio
-async def test_refine_fold_carries_identity_in_every_step():
-    chain = _FakeChain()
-    gen = LLMReadmeGenerator(_FakeClient(chain), batch_token_limit=50)
-    blocks = _blocks(12)
-    await gen.generate(_ctx_with_identity(), blocks)
-    assert len(chain.prompts) > 1
-    assert all("Project name: demo" in p for p in chain.prompts)
+    gen = LLMReadmeGenerator(_FakeClient(chain))
+    await gen.generate(pre=make_pre(), woven="ctx", existing_readme="# Old\n\nkeep me", feedback="be terse")
+    assert "keep me" in chain.prompts[0]
+    assert "be terse" in chain.prompts[0]
 
 
 class _TitlelessThenFixed:
-    """First draft trips the gate (no title); the revise call returns a valid one."""
-
-    def __init__(self):
+    def __init__(self) -> None:
         self.prompts: list[str] = []
 
-    async def ainvoke(self, prompt):
+    async def ainvoke(self, prompt: str):  # noqa: ANN201
         self.prompts.append(prompt)
-        body = "no title here" if len(self.prompts) == 1 else "# Title\n\nfixed"
+        body = "no title here" if len(self.prompts) == 1 else "# demo\n\nfixed"
         return ReadmeOutput(markdown=body), TokenUsage(10, 5)
 
 
 @pytest.mark.asyncio
-async def test_quality_gate_auto_revises_a_flagged_draft():
+async def test_quality_gate_auto_revises_a_flagged_draft() -> None:
     chain = _TitlelessThenFixed()
-    gen = LLMReadmeGenerator(_FakeClient(chain), batch_token_limit=100_000)
-    markdown, usage = await gen.generate(_ctx(), _blocks(2))
-    assert markdown == "# Title\n\nfixed"
+    gen = LLMReadmeGenerator(_FakeClient(chain))
+    markdown, usage = await gen.generate(pre=make_pre(), woven="ctx", existing_readme=None, feedback=None)
+    assert markdown == "# demo\n\nfixed"
     assert len(chain.prompts) == 2  # initial draft + one auto-revision
     assert usage == TokenUsage(20, 10)
-    # The revise call carries the gate's finding as feedback.
     assert "title" in chain.prompts[1].lower()
 
 
 @pytest.mark.asyncio
-async def test_quality_gate_revision_is_bounded():
-    # A chain that never adds a title must not loop past the revise limit.
+async def test_quality_gate_revision_is_bounded() -> None:
     chain = _FakeChain()
 
-    async def titleless(prompt):
+    async def titleless(prompt: str):  # noqa: ANN202
         chain.prompts.append(prompt)
         return ReadmeOutput(markdown="still no title"), TokenUsage(10, 5)
 
     chain.ainvoke = titleless  # type: ignore[method-assign]
-    gen = LLMReadmeGenerator(_FakeClient(chain), batch_token_limit=100_000)
-    markdown, _ = await gen.generate(_ctx(), _blocks(2))
+    gen = LLMReadmeGenerator(_FakeClient(chain))
+    markdown, _ = await gen.generate(pre=make_pre(), woven="ctx", existing_readme=None, feedback=None)
     assert markdown == "still no title"
     assert len(chain.prompts) == 2  # initial + exactly REVISE_LIMIT(=1) retry

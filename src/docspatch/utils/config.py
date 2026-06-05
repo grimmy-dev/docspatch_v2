@@ -167,7 +167,7 @@ def load_config(global_path: Path | None = None, repo_path: Path | None = None) 
         provider=resolve("provider"),
         api_key=ScopedValue(api_key_val, api_key_scope),
         generator_model=resolve("generator_model"),
-        scout_model=resolve("scout_model"),
+        analysis_model=resolve("analysis_model"),
         tone=resolve("tone"),
         batch_token_limit=resolve("batch_token_limit"),
         concurrency_limit=resolve("concurrency_limit"),

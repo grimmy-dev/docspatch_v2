@@ -1,33 +1,15 @@
-"""Behaviour of the structured-output and domain summary schemas."""
+"""Behaviour of the structured-output and config schemas."""
 
-from docspatch.schemas import FileSummary, FileSummaryOutput
-
-
-def test_file_summary_output_parses_new_fields() -> None:
-    out = FileSummaryOutput.model_validate(
-        {
-            "summary": "does x",
-            "interfaces": ["f()", "C"],
-            "relationships": ["imports a"],
-            "change_note": "added f",
-            "function_summaries": {"f": "does f"},
-        }
-    )
-    assert out.interfaces == ["f()", "C"]
-    assert out.relationships == ["imports a"]
-    assert out.change_note == "added f"
+from docspatch.schemas import DocspatchConfig, ReadmeOutput, RunSettings
 
 
-def test_file_summary_output_defaults_new_fields() -> None:
-    out = FileSummaryOutput(summary="x")
-    assert out.interfaces == []
-    assert out.relationships == []
-    assert out.change_note is None
+def test_readme_output_holds_markdown() -> None:
+    out = ReadmeOutput(markdown="# Title\n\nbody")
+    assert out.markdown.startswith("# Title")
 
 
-def test_file_summary_defaults_new_fields() -> None:
-    s = FileSummary(path="src/x.py", summary="does x")
-    assert s.interfaces == []
-    assert s.relationships == []
-    assert s.change_note is None
-    assert s.compressed == ""
+def test_run_settings_fall_back_to_defaults() -> None:
+    settings = RunSettings.from_config(DocspatchConfig())
+    assert settings.batch_token_limit > 0
+    assert settings.concurrency_limit > 0
+    assert settings.call_timeout > 0

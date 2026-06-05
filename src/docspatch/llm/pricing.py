@@ -6,12 +6,9 @@ from docspatch.llm.catalogue import tier_info
 from docspatch.utils.errors import ConfigError
 
 # Output-token fraction of input, per pipeline — measured, independently tunable.
-# Scout: compressed source in, rich structured summaries out → high ratio.
-# Docs: full function source in, moderate docstrings out → a touch lower.
-# (The earlier shared ~0.15 under-projected scout output by 3–4x.)
-SCOUT_OUTPUT_RATIO = 0.6
+# Docs: full function source in, moderate docstrings out.
 DOCS_OUTPUT_RATIO = 0.5
-DEFAULT_OUTPUT_RATIO = SCOUT_OUTPUT_RATIO
+DEFAULT_OUTPUT_RATIO = 0.6
 
 
 @dataclass(frozen=True)

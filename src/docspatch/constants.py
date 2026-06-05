@@ -12,7 +12,7 @@ TONES: Final[dict[str, str]] = {
 
 GLOBAL_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"provider"})
 REPO_CONFIG_KEYS: Final[frozenset[str]] = frozenset(
-    {"generator_model", "scout_model", "tone", "batch_token_limit", "concurrency_limit", "call_timeout"}
+    {"generator_model", "analysis_model", "tone", "batch_token_limit", "concurrency_limit", "call_timeout"}
 )
 INT_CONFIG_KEYS: Final[frozenset[str]] = frozenset({"batch_token_limit", "concurrency_limit", "call_timeout"})
 
@@ -25,7 +25,7 @@ CONFIG_DEFAULTS: Final[dict[str, str | int | None]] = {
     "provider": None,
     "api_key": None,
     "generator_model": None,
-    "scout_model": None,
+    "analysis_model": None,
     "tone": DEFAULT_TONE,
     "batch_token_limit": DEFAULT_BATCH_TOKEN_LIMIT,
     "concurrency_limit": DEFAULT_CONCURRENCY_LIMIT,

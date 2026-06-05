@@ -109,11 +109,11 @@ def readme_cmd(
     remarks: str | None = readme.REMARKS_OPTION,
     debug: bool = DEBUG_OPTION,
 ) -> None:
-    """Generate a path-scoped README from scout summaries.
+    """Generate a path-scoped README through the agent context pipeline.
 
     Args:
         path: Directory to scope the README to; repo root when omitted.
-        update: Rewrite from scratch instead of refreshing in place.
+        update: Allow free restructuring instead of refreshing in place.
         check: Report staleness without writing or calling a model.
         remarks: Extra instruction added to the generation prompt.
     """

@@ -1,4 +1,4 @@
-"""Generate a path-scoped README from scout summaries."""
+"""Generate a path-scoped README through the agent context pipeline."""
 
 import asyncio
 from dataclasses import dataclass
@@ -6,11 +6,9 @@ from pathlib import Path
 
 import typer
 
-from docspatch.cache import ScoutCache
 from docspatch.llm import tier_for_model
-from docspatch.pipelines.readme.check import CHECK_GENERATE, CHECK_STALE, run_check
-from docspatch.schemas import RunSettings
 from docspatch.ui import Prompter, QuestionaryPrompter, console, status
+from docspatch.ui.prompter import is_interactive
 from docspatch.utils.config import default_store
 from docspatch.utils.errors import ConfigError, ReadmeError
 from docspatch.utils.lockfile import run_lock
@@ -87,6 +85,54 @@ def resolve_target(path: Path | None, repo_root: Path) -> tuple[str, Path]:
     return rel, abs_path / README_NAME
 
 
+def run_check(repo_root: Path, scope: str, out_path: Path) -> bool:
+    """Report README freshness from the change manifest, no model calls.
+
+    Args:
+        repo_root: The repository root.
+        scope: The repo-relative scope.
+        out_path: The README path.
+
+    Returns:
+        True when the README is fresh (up to date).
+    """
+    from docspatch.pipelines.readme.pipeline import is_fresh, scope_state
+
+    with status("Checking for changes…"):
+        state = scope_state(repo_root, scope)
+    rel = out_path.relative_to(repo_root.resolve()).as_posix()
+    if is_fresh(state, out_path):
+        console.print(f"[green]✓[/green] {rel} is up to date.")
+        return True
+    if not out_path.exists():
+        console.print(f"[yellow]{rel} does not exist — it needs generation.[/yellow]")
+    else:
+        cs = state.change_set
+        console.print(f"[yellow]{rel} may be stale — {len(cs.changed)} changed, {len(cs.removed)} removed file(s).[/yellow]")
+    return False
+
+
+def _with_update(flags: ReadmeFlags) -> str | None:
+    """Fold the ``--update`` flag into the run remark as a restructure instruction.
+
+    The pipeline always treats the existing README as the baseline and voice
+    reference; ``--update`` simply licenses free restructuring on top of that.
+
+    Args:
+        flags: The resolved run inputs.
+
+    Returns:
+        The combined remark, or null when neither remark nor update is set.
+    """
+    if not flags.update:
+        return flags.remarks
+    note = (
+        "Rewrite the README freely: you may restructure, reorder, and reword sections for clarity, "
+        "while preserving the content of every hand-written section."
+    )
+    return f"{flags.remarks}\n{note}" if flags.remarks else note
+
+
 def run(flags: ReadmeFlags, prompter: Prompter | None = None) -> None:
     """Generate or check a README for the requested scope.
 
@@ -97,47 +143,49 @@ def run(flags: ReadmeFlags, prompter: Prompter | None = None) -> None:
     validate_flags(flags)
     repo_root = Path.cwd()
     scope, out_path = resolve_target(flags.path, repo_root)
-    readme_rel = out_path.relative_to(repo_root.resolve()).as_posix()
     p = prompter or QuestionaryPrompter()
-    log.debug("resolved scope=%s readme=%s", scope, readme_rel)
+    log.debug("resolved scope=%s readme=%s", scope, out_path.name)
 
     if flags.check:
-        action = run_check(repo_root.resolve(), scope, readme_rel, p)
-        log.debug("check action: %s", action)
-        if action == CHECK_GENERATE:
-            console.print("[dim]Generating README…[/dim]")
-        else:
-            raise typer.Exit(1 if action == CHECK_STALE else 0)
+        fresh = run_check(repo_root.resolve(), scope, out_path)
+        if fresh or not is_interactive() or not p.confirm("Generate now?"):
+            raise typer.Exit(0 if fresh else 1)
+        console.print("[dim]Generating README…[/dim]")
 
     # Deferred so a bare `dp`/`--help`/`--check` never pays the provider-SDK cost.
     with status("Starting up…"):
         from docspatch.llm import LLMClient, validate_api_key
         from docspatch.pipelines.readme.generator import LLMReadmeGenerator
-        from docspatch.pipelines.readme.pipeline import ensure_scope_fresh, generate_readme
+        from docspatch.pipelines.readme.pipeline import generate_readme
 
+    remarks = _with_update(flags)
     store = default_store(repo_root)
     selections = ensure_configured(store, p, validate_api_key)
-    settings = RunSettings.from_config(store.read())
     tier = tier_for_model(selections.provider, selections.generator_model)
     log.debug("config loaded: provider=%s tier=%s", selections.provider, tier)
 
     with run_lock(repo_root):
-        ctx_store = ScoutCache(repo_root)
-        ensure_scope_fresh(repo_root, ctx_store, store, selections.provider, selections.api_key, scope, p)
-        client = LLMClient(provider=selections.provider, api_key=selections.api_key, generator_tier=tier)
-        generator = LLMReadmeGenerator(client, batch_token_limit=settings.batch_token_limit)
+        with status(f"Connecting to {selections.provider}…"):
+            analysis_client = LLMClient(provider=selections.provider, api_key=selections.api_key, generator_tier="fast")
+            gen_client = LLMClient(provider=selections.provider, api_key=selections.api_key, generator_tier=tier)
+            connected = analysis_client.validate_key()
+        if not connected:
+            console.print(f"[red]✗[/red] Could not connect to {selections.provider}. Check your API key with `dp init --reconfigure`.")
+            raise typer.Exit(1)
+        console.print(f"[green]✓[/green] Connected to {selections.provider}.")
+        generator = LLMReadmeGenerator(gen_client)
         log.debug("starting readme generation")
         result = asyncio.run(
             generate_readme(
                 repo_root,
                 scope,
                 out_path,
+                analysis_client=analysis_client,
                 generator=generator,
                 prompter=p,
-                remarks=flags.remarks,
+                remarks=remarks,
                 provider=selections.provider,
                 tier=tier,
-                rewrite=flags.update,
             )
         )
     log.debug("readme finished: written=%s", result.written)

@@ -38,7 +38,7 @@ async def _collect_resumable(saver: AsyncSqliteSaver) -> list[str]:
     seen: set[str] = set()
     async for tup in saver.alist(None):
         thread_id = tup.config["configurable"]["thread_id"]
-        if not thread_id.startswith(("review-", "scout-")):
+        if not thread_id.startswith("review-"):
             seen.add(thread_id)
     return sorted(seen, reverse=True)
 

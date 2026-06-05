@@ -18,7 +18,7 @@ def make_config(
         provider=ScopedValue(provider, scope),
         api_key=ScopedValue(api_key, scope),
         generator_model=ScopedValue(generator_model, scope),
-        scout_model=ScopedValue("claude-haiku-4-5-20251001", "default"),
+        analysis_model=ScopedValue("claude-haiku-4-5-20251001", "default"),
         tone=ScopedValue("professional", "default"),
         batch_token_limit=ScopedValue(6000, "default"),
     )
@@ -31,7 +31,7 @@ def test_config_shows_all_keys(monkeypatch, tmp_path):
     monkeypatch.setattr("docspatch.commands.config.load_config", lambda **_: make_config())
     result = runner.invoke(app, ["config"])
     assert result.exit_code == 0
-    for key in ("provider", "api_key", "generator_model", "scout_model", "tone", "batch_token_limit"):
+    for key in ("provider", "api_key", "generator_model", "analysis_model", "tone", "batch_token_limit"):
         assert key in result.output
 
 
@@ -190,7 +190,7 @@ def test_cleanup_deletes_selected_directory(monkeypatch, tmp_path):
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
     (cache_dir / "entry.gz").write_bytes(b"data")
-    item = CleanupItem(label="Scout cache", path=cache_dir)
+    item = CleanupItem(label="Caches", path=cache_dir)
 
     use_scripted(monkeypatch, [item], True)
     monkeypatch.setattr("docspatch.commands.cleanup.cleanup_items", lambda root: [item])
@@ -211,6 +211,30 @@ def test_cleanup_no_deletion_when_confirm_false(monkeypatch, tmp_path):
 
     runner.invoke(app, ["cleanup"])
     assert target.exists()
+
+
+def test_cleanup_items_cover_the_change_manifest(tmp_path):
+    from docspatch.commands.cleanup import cleanup_items
+    from docspatch.manifest import MANIFEST_NAME
+
+    paths = [item.path for item in cleanup_items(tmp_path)]
+    assert tmp_path / ".docspatch" / MANIFEST_NAME in paths
+
+
+def test_cleanup_deletes_change_manifest(monkeypatch, tmp_path):
+    from docspatch.commands.cleanup import CleanupItem
+    from docspatch.manifest import ChangeManifest
+
+    manifest = ChangeManifest(tmp_path)
+    manifest.commit("readme", {"a.py": "h"})
+    assert manifest.path.exists()
+    item = CleanupItem(label="Change manifest", path=manifest.path)
+
+    use_scripted(monkeypatch, [item], True)
+    monkeypatch.setattr("docspatch.commands.cleanup.cleanup_items", lambda root: [item])
+
+    runner.invoke(app, ["cleanup"])
+    assert not manifest.path.exists()
 
 
 def test_cleanup_skips_nonexistent_path_with_info(monkeypatch, tmp_path):

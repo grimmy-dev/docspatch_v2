@@ -7,6 +7,7 @@ inherit these semantics from ``run_fanout``.
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
 from operator import add
 from typing import Annotated, Any, TypedDict
 
@@ -15,17 +16,24 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from docspatch.checkpoints.saver import make_serde
 from docspatch.pipelines.fanout import build_fanout_graph, run_fanout
-from docspatch.pipelines.scout.state import ScoutBatch
 from docspatch.utils.errors import TransientExhausted
 
 
+@dataclass(frozen=True)
+class FanoutBatch:
+    """Minimal id-bearing batch for exercising the generic fan-out runner."""
+
+    id: int
+    paths: list[str] = field(default_factory=list)
+
+
 class _State(TypedDict, total=False):
-    batches: list[ScoutBatch]
+    batches: list[FanoutBatch]
     completed_batches: Annotated[list[int], add]
     results: Annotated[list[int], add]
 
 
-def _payload(_state: dict[str, Any], batch: ScoutBatch) -> dict[str, Any]:
+def _payload(_state: dict[str, Any], batch: FanoutBatch) -> dict[str, Any]:
     return {"batch": batch}
 
 
@@ -34,7 +42,7 @@ def _make_worker(fail_ids: frozenset[int] = frozenset()) -> Callable[[dict[str, 
     seen: set[int] = set()
 
     async def worker(payload: dict[str, Any]) -> _State:
-        batch: ScoutBatch = payload["batch"]
+        batch: FanoutBatch = payload["batch"]
         first_attempt = batch.id not in seen
         seen.add(batch.id)
         if first_attempt and batch.id in fail_ids:
@@ -46,11 +54,11 @@ def _make_worker(fail_ids: frozenset[int] = frozenset()) -> Callable[[dict[str, 
 
 async def _run(
     worker: Callable[[dict[str, Any]], Awaitable[_State]],
-    batches: list[ScoutBatch],
+    batches: list[FanoutBatch],
     switch: Callable[[], Awaitable[bool]] | None,
     *,
     label: str = "test",
-    on_wave: Callable[[int, dict[str, Any], Sequence[ScoutBatch]], None] | None = None,
+    on_wave: Callable[[int, dict[str, Any], Sequence[FanoutBatch]], None] | None = None,
 ) -> dict[str, Any]:
     async with AsyncSqliteSaver.from_conn_string(":memory:") as saver:
         saver.serde = make_serde()
@@ -61,8 +69,8 @@ async def _run(
         )
 
 
-def _batches(n: int) -> list[ScoutBatch]:
-    return [ScoutBatch(id=i, paths=[]) for i in range(n)]
+def _batches(n: int) -> list[FanoutBatch]:
+    return [FanoutBatch(id=i, paths=[]) for i in range(n)]
 
 
 def test_all_batches_complete_in_one_wave() -> None:
@@ -79,7 +87,7 @@ def test_switch_reissues_only_unfinished_batch() -> None:
         switches.append(1)
         return True
 
-    def on_wave(wave: int, _current: dict[str, Any], remaining: Sequence[ScoutBatch]) -> None:
+    def on_wave(wave: int, _current: dict[str, Any], remaining: Sequence[FanoutBatch]) -> None:
         waves.append((wave, [b.id for b in remaining]))
 
     final = asyncio.run(_run(_make_worker(fail_ids=frozenset({1})), _batches(3), switch, on_wave=on_wave))
@@ -90,8 +98,8 @@ def test_switch_reissues_only_unfinished_batch() -> None:
 
 
 def test_exhaustion_without_switch_raises() -> None:
-    with pytest.raises(TransientExhausted, match="scout exhausted"):
-        asyncio.run(_run(_make_worker(fail_ids=frozenset({0})), _batches(1), switch=None, label="scout"))
+    with pytest.raises(TransientExhausted, match="fanout exhausted"):
+        asyncio.run(_run(_make_worker(fail_ids=frozenset({0})), _batches(1), switch=None, label="fanout"))
 
 
 def test_switch_abort_keeps_partial_state() -> None:

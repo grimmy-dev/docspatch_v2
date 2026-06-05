@@ -263,7 +263,7 @@ def test_handles_many_functions_per_file(tmp_path: Path) -> None:
 
 
 def test_one_llm_call_per_batch(tmp_path: Path) -> None:
-    """Bundle all 3 fns into a single LLM call (scout-style batching)."""
+    """Bundle all 3 fns into a single LLM call (batched generation)."""
     src = tmp_path / "many.py"
     src.write_text('"""Module."""\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n')
     gen = FakeGenerator(docstring="d.")

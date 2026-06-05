@@ -53,7 +53,7 @@ def test_no_prompts_when_fully_configured(tmp_path):
     store.global_path.parent.mkdir(parents=True, exist_ok=True)
     store.global_path.write_text('provider = "anthropic"\napi_key_anthropic = "sk-existing"\n')
     store.repo_path.parent.mkdir(parents=True, exist_ok=True)
-    store.repo_path.write_text('generator_model = "claude-sonnet-4-6"\nscout_model = "claude-haiku-4-5-20251001"\ntone = "technical"\n')
+    store.repo_path.write_text('generator_model = "claude-sonnet-4-6"\nanalysis_model = "claude-haiku-4-5-20251001"\ntone = "technical"\n')
 
     prompter = ScriptedPrompter([])
     selections = ensure_configured(store, prompter, accept_key)

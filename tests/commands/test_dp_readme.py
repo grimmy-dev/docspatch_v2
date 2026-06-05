@@ -1,6 +1,5 @@
 """``dp readme`` command: target resolution and the no-LLM staleness check."""
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -8,6 +7,8 @@ from typer.testing import CliRunner
 
 from docspatch.cli import app
 from docspatch.commands.readme import resolve_target
+from docspatch.manifest import ChangeManifest
+from docspatch.pipelines.readme.pipeline import scope_state
 
 runner = CliRunner()
 
@@ -70,26 +71,30 @@ def test_rejects_check_with_remarks(fake_repo: Path) -> None:
 # --- `--check` (no model calls) ---
 
 
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
-
-
 def test_check_stale_when_readme_missing(fake_repo: Path) -> None:
-    result = runner.invoke(app, ["readme", "--check"])
-    assert result.exit_code == 1  # uncommitted/absent README is stale
-
-
-def test_check_current_after_committing_readme(fake_repo: Path) -> None:
-    _git(fake_repo, "init")
-    _git(fake_repo, "config", "user.name", "Ada")
-    _git(fake_repo, "config", "user.email", "ada@example.com")
     (fake_repo / "a.py").write_text("x = 1\n")
-    _git(fake_repo, "add", "-A")
-    _git(fake_repo, "commit", "-m", "feat: a")
+    result = runner.invoke(app, ["readme", "--check"])
+    assert result.exit_code == 1  # absent README needs generation
+
+
+def test_check_fresh_when_manifest_matches_current(fake_repo: Path) -> None:
+    (fake_repo / "a.py").write_text("x = 1\n")
     (fake_repo / "README.md").write_text("# demo\n")
-    _git(fake_repo, "add", "-A")
-    _git(fake_repo, "commit", "-m", "docs: readme")
+    # A prior successful run would have committed this baseline.
+    state = scope_state(fake_repo, ".")
+    ChangeManifest(fake_repo).commit("readme", state.hashes)
 
     result = runner.invoke(app, ["readme", "--check"])
     assert result.exit_code == 0
     assert "up to date" in result.output.lower()
+
+
+def test_check_stale_after_code_edit(fake_repo: Path) -> None:
+    (fake_repo / "a.py").write_text("x = 1\n")
+    (fake_repo / "README.md").write_text("# demo\n")
+    ChangeManifest(fake_repo).commit("readme", scope_state(fake_repo, ".").hashes)
+    (fake_repo / "a.py").write_text("x = 2  # changed\n")
+
+    result = runner.invoke(app, ["readme", "--check"])
+    assert result.exit_code == 1
+    assert "stale" in result.output.lower()

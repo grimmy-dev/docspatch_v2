@@ -226,7 +226,7 @@ class LLMError(DocspatchError):
 class TransientExhausted(LLMError):
     """Retry budget for a transient (rate-limit / 5xx / timeout) call ran out.
 
-    Distinct subclass so any pipeline (scout, generator, future ones) can offer
+    Distinct subclass so any pipeline (docs, readme, future ones) can offer
     the user a provider/model switch instead of aborting the whole run.
     """
 
@@ -340,18 +340,6 @@ class ReadmeError(DocspatchError):
     """README generation cannot proceed with the current inputs."""
 
     code: ClassVar[str] = "docspatch.readme"
-
-    @classmethod
-    def no_summaries(cls, scope: str) -> ReadmeError:
-        """Create an error when no scoped summaries are available to draw on.
-
-        Args:
-            scope: The requested directory scope.
-        """
-        return cls(
-            f"No summaries found under {scope!r}.",
-            hint="Run `dp init` or `dp docs` first so docspatch can scout the code.",
-        )
 
     @classmethod
     def not_a_directory(cls, path: str) -> ReadmeError:

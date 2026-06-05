@@ -62,13 +62,19 @@ def _prompt_action(prompter: Prompter) -> str:
     )
 
 
-async def review_readme(prompter: Prompter, regenerate: Regenerate, *, existing: str | None = None) -> ReviewResult:
+async def review_readme(
+    prompter: Prompter, regenerate: Regenerate, *, existing: str | None = None, max_revisions: int = 3
+) -> ReviewResult:
     """Loop through README generation, previewing, and user-led revision until acceptance or cancellation.
+
+    A safety bound: after ``max_revisions`` revise rounds the latest draft is
+    accepted and written so the loop can never run unbounded.
 
     Args:
         prompter: The interface for collecting user input and feedback.
         regenerate: Callback to produce a new README version based on existing feedback history.
         existing: The current README, shown as a diff baseline; null for a first-time README.
+        max_revisions: Revise rounds allowed before the latest draft is auto-accepted.
 
     Returns:
         The outcome of the review process including usage metrics and the final document.
@@ -92,3 +98,6 @@ async def review_readme(prompter: Prompter, regenerate: Regenerate, *, existing:
         with status("Revising README…"):
             markdown, round_usage = await regenerate(feedback)
         usage += round_usage
+        if len(feedback) >= max_revisions:
+            console.print(f"[yellow]Revision limit ({max_revisions}) reached — writing the latest draft.[/yellow]")
+            return ReviewResult(accepted=True, markdown=markdown, usage=usage)

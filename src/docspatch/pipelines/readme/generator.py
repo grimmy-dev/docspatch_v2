@@ -1,49 +1,38 @@
-"""LLM-powered README generation: one call when it fits, a refine fold when it overflows."""
+"""Single-call README generator with a deterministic quality-gate auto-revision."""
 
-from dataclasses import replace
-from typing import Protocol
+from __future__ import annotations
 
-from docspatch.llm import LLMClient, TokenUsage
-from docspatch.pipelines.readme.markers import FileBlock
-from docspatch.pipelines.readme.prompts import (
-    ReadmeContext,
-    build_refine_prompt,
-    build_single_prompt,
-)
+from typing import TYPE_CHECKING, Protocol
+
+from docspatch.llm import TokenUsage
+from docspatch.pipelines.readme.prompts import build_generator_prompt
 from docspatch.pipelines.readme.quality import findings_as_feedback, inspect_readme
+from docspatch.pipelines.readme.state import PreContext
 from docspatch.schemas import ReadmeOutput
-from docspatch.source import estimate_tokens
-from docspatch.utils.batcher import BatchPlan, greedy_batches
 from docspatch.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from docspatch.llm import LLMClient
 
 log = get_logger("readme.generator")
 
 REVISE_LIMIT = 1
-"""Max deterministic-gate auto-revisions before the draft goes to review regardless."""
-
-
-def partition(blocks: list[FileBlock], limit: int) -> BatchPlan[FileBlock]:
-    """Split file blocks into token-bounded batches, preserving directory order.
-
-    Args:
-        blocks: The in-scope file-summary blocks, in summary order.
-        limit: The per-batch token budget.
-
-    Returns:
-        A plan whose batches together cover every input block.
-    """
-    return greedy_batches(blocks, lambda b: estimate_tokens(b.body), limit)
+"""Max deterministic-gate auto-revisions before the draft reaches the reviewer."""
 
 
 class ReadmeGenerator(Protocol):
     """What the README pipeline needs from a generator."""
 
-    async def generate(self, ctx: ReadmeContext, blocks: list[FileBlock]) -> tuple[str, TokenUsage]:
+    async def generate(
+        self, *, pre: PreContext, woven: str, existing_readme: str | None, feedback: str | None
+    ) -> tuple[str, TokenUsage]:
         """Produce a README and report the tokens its calls consumed.
 
         Args:
-            ctx: Resolved facts, tree, and instructions for the run.
-            blocks: The in-scope file-summary blocks.
+            pre: The run backbone (scope, facts, entry points).
+            woven: The assembled context the README is grounded in.
+            existing_readme: The current README, or null for a first write.
+            feedback: Accumulated revise feedback, or null.
 
         Returns:
             The README markdown and the total token usage.
@@ -52,68 +41,44 @@ class ReadmeGenerator(Protocol):
 
 
 class LLMReadmeGenerator:
-    """LLM-backed generator: one call under the limit, a refine fold above it."""
+    """LLM-backed generator: one call, plus one auto-revision if a quality check trips."""
 
-    def __init__(self, client: LLMClient, *, batch_token_limit: int) -> None:
-        """Bind the generator to a client and its per-batch token budget.
+    def __init__(self, client: LLMClient) -> None:
+        """Bind the generator to a structured-output client.
 
         Args:
             client: The LLM client used for every call.
-            batch_token_limit: The token budget that triggers the refine fold.
         """
         self.chain = client.with_structured_output(ReadmeOutput)
-        self.batch_token_limit = batch_token_limit
 
-    async def generate(self, ctx: ReadmeContext, blocks: list[FileBlock]) -> tuple[str, TokenUsage]:
+    async def generate(
+        self, *, pre: PreContext, woven: str, existing_readme: str | None, feedback: str | None
+    ) -> tuple[str, TokenUsage]:
         """Draft the README, then auto-revise once if it trips a quality check.
 
         The deterministic gate keeps obvious defects (marketing language, a
-        missing title, an unnamed project) from ever reaching the reviewer, so
-        the manual revise loop is left for polish rather than repair.
+        missing title, an unnamed project, a missing entry-point command) from
+        reaching the reviewer, so the manual revise loop is left for polish.
 
         Args:
-            ctx: Resolved facts, tree, and instructions for the run.
-            blocks: The in-scope file-summary blocks.
+            pre: The run backbone.
+            woven: The assembled context.
+            existing_readme: The current README, or null.
+            feedback: Accumulated revise feedback, or null.
 
         Returns:
             The README markdown and the total token usage across every call.
         """
-        markdown, usage = await self._draft(ctx, blocks)
+        result, usage = await self.chain.ainvoke(build_generator_prompt(pre.scope, woven, existing_readme, feedback))
+        markdown = result.markdown
+        name = pre.facts.name if pre.facts else None
         for _ in range(REVISE_LIMIT):
-            findings = inspect_readme(markdown, ctx)
+            findings = inspect_readme(markdown, project_name=name, entry_points=pre.entry_points)
             if not findings:
                 break
             log.debug("quality gate: revising for %s", ", ".join(f.code for f in findings))
-            ctx = replace(ctx, feedback=(*ctx.feedback, findings_as_feedback(findings)))
-            markdown, revise_usage = await self._draft(ctx, blocks)
-            usage += revise_usage
+            gate = findings_as_feedback(findings)
+            combined = f"{feedback}\n{gate}" if feedback else gate
+            result, revise_usage = await self.chain.ainvoke(build_generator_prompt(pre.scope, woven, existing_readme, combined))
+            markdown, usage = result.markdown, usage + revise_usage
         return markdown, usage
-
-    async def _draft(self, ctx: ReadmeContext, blocks: list[FileBlock]) -> tuple[str, TokenUsage]:
-        """Produce one README draft, folding batch by batch only when blocks overflow.
-
-        The first batch seeds a full draft with the backbone; each later batch
-        revises that draft, again carrying the backbone, so no step ever drafts
-        without the project's identity.
-
-        Args:
-            ctx: Resolved facts, tree, and instructions for the run.
-            blocks: The in-scope file-summary blocks.
-
-        Returns:
-            The README markdown and the token usage for this draft.
-        """
-        batches = partition(blocks, self.batch_token_limit).batches
-        if len(batches) <= 1:
-            log.debug("single-call generation: %d block(s)", len(blocks))
-            result, usage = await self.chain.ainvoke(build_single_prompt(ctx, blocks))
-            return result.markdown, usage
-
-        log.debug("refine-fold generation: %d block(s) over %d batch(es)", len(blocks), len(batches))
-        seed, *rest = batches
-        result, usage = await self.chain.ainvoke(build_single_prompt(ctx, list(seed.items)))
-        draft = result.markdown
-        for batch in rest:
-            revised, step_usage = await self.chain.ainvoke(build_refine_prompt(ctx, draft, list(batch.items)))
-            draft, usage = revised.markdown, usage + step_usage
-        return draft, usage

@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from docspatch.cache import ScoutCache
 from docspatch.ui import Prompter, QuestionaryPrompter, console, status
 from docspatch.utils.config import ConfigStore, default_store
 from docspatch.utils.ignore import ensure_docspatch_ignored
@@ -33,19 +32,15 @@ def run(
     # Deferred so a bare `dp`/`--help` never pays the provider-SDK import cost.
     with status("Starting up…"):
         from docspatch.llm import validate_api_key
-        from docspatch.pipelines.scout.pipeline import pre_build
 
     log.debug("init starting for repo: %s", repo_root)
     selections = ensure_configured(store, p, validate_api_key, reconfigure=reconfigure)
     select_license(repo_root, p, reconfigure=reconfigure)
     log.debug("config + license resolved; provider=%s", selections.provider)
 
-    ctx_store = ScoutCache(repo_root)
     ensure_docspatch_ignored(repo_root)
     console.print("[green]✓[/green] .docspatch added to .gitignore")
-
-    log.debug("starting scout pre-build")
-    pre_build(repo_root, ctx_store, store, selections.provider, selections.api_key, p)
+    console.print("[green]✓[/green] docspatch is ready. Run `dp docs` to document code or `dp readme` to generate a README.")
 
 
 def resolve_store(repo_root: Path, global_config_path: Path | None) -> ConfigStore:

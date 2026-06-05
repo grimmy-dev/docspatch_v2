@@ -61,8 +61,8 @@ class LLMClient:
         self.gate = RateLimitGate(LLM_RETRY, on_retry=retry_cb)
 
     @property
-    def scout_model(self) -> str:
-        """Return the identifier for the model used for scouting tasks.
+    def analysis_model(self) -> str:
+        """Return the identifier for the fast model used for analysis tasks.
 
         Returns:
             Fast tier model identifier.

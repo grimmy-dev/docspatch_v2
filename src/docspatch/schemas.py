@@ -83,7 +83,7 @@ class DocspatchConfig:
     provider: ScopedValue[str | None] = field(default_factory=lambda: _default("provider"))
     api_key: ScopedValue[str | None] = field(default_factory=lambda: _default("api_key"))
     generator_model: ScopedValue[str | None] = field(default_factory=lambda: _default("generator_model"))
-    scout_model: ScopedValue[str | None] = field(default_factory=lambda: _default("scout_model"))
+    analysis_model: ScopedValue[str | None] = field(default_factory=lambda: _default("analysis_model"))
     tone: ScopedValue[str | None] = field(default_factory=lambda: _default("tone"))
     batch_token_limit: ScopedValue[int] = field(default_factory=lambda: _default("batch_token_limit"))
     concurrency_limit: ScopedValue[int] = field(default_factory=lambda: _default("concurrency_limit"))
@@ -142,84 +142,7 @@ class FunctionDocState:
     line_start: int = 0
 
 
-@dataclass
-class FileSummary:
-    path: str
-    summary: str
-    functions: list[FunctionMetadata] = field(default_factory=list)
-    interfaces: list[str] = field(default_factory=list)
-    relationships: list[str] = field(default_factory=list)
-    # Delta narrative vs the prior summary; None on the first summary.
-    change_note: str | None = None
-    # Compressed source kept so a later changed-file re-run can diff old vs new.
-    compressed: str = ""
-    content_hash: str = ""
-    # size + mtime_ns power constant-time fast-skip before any read/parse.
-    size: int = 0
-    mtime_ns: int = 0
-
-
 # ---- LLM structured-output schemas -----------------------------------------
-
-
-class FileSummaryOutput(BaseModel):
-    """Module summary, public surface, relationships, and per-function lines."""
-
-    summary: str = Field(description="One decent paragraph overview of the module's purpose and functionality.")
-    interfaces: list[str] = Field(
-        default_factory=list,
-        description="Public functions, classes, and exports a caller uses. One entry each.",
-    )
-    relationships: list[str] = Field(
-        default_factory=list,
-        description="Module connections: what it depends on and what depends on it.",
-    )
-    change_note: str | None = Field(
-        default=None,
-        description="One line on what changed since the prior version. Omit when summarising fresh.",
-    )
-    function_summaries: dict[str, str] = Field(
-        default_factory=dict,
-        description="Keyed by function name. Value = one concrete descriptive on what the function does.",
-    )
-
-
-class BatchSummaryOutput(BaseModel):
-    """Summaries for a batch of modules, keyed by the path passed in the prompt."""
-
-    files: dict[str, FileSummaryOutput] = Field(
-        default_factory=dict,
-        description="Mapping keyed by file path exactly as given in the `Expected paths` list.",
-    )
-
-
-class ComponentNote(BaseModel):
-    """One major subsystem in the project-level overview."""
-
-    name: str = Field(description="Module, package, or subsystem name (e.g. 'scout pipeline', 'llm client').")
-    role: str = Field(description="One line on what this component is responsible for.")
-
-
-class ProjectOverviewOutput(BaseModel):
-    """Project-level synthesis built from every file summary. Codebase context, top of CONTEXT.md."""
-
-    summary: str = Field(description="One paragraph: what the project does and who uses it.")
-    architecture: str = Field(
-        description="How the codebase is organised and how the pieces interact, including the main data/control flow. A few sentences."
-    )
-    components: list[ComponentNote] = Field(
-        default_factory=list,
-        description="Major subsystems, each with a one-line role. Group at the package/pipeline level, not per file.",
-    )
-    file_tiers: dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "Per-file README relevance, keyed by the file path exactly as given. "
-            "Value is 'public' if a README for this project would mention the module "
-            "(entry points, CLI commands, public API) or 'internal' for plumbing a "
-            "README never documents. Judge across CLI, library, and service alike."
-        ),
-    )
 
 
 class ReadmeOutput(BaseModel):

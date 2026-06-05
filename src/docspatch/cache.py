@@ -1,4 +1,4 @@
-"""Disk-backed Gzip-JSON cache for storing file states and scout summaries."""
+"""Disk-backed Gzip-JSON cache for storing per-function documentation state."""
 
 import gzip
 import hashlib
@@ -10,20 +10,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from docspatch.schemas import FileSummary, FunctionDocState, FunctionMetadata
+from docspatch.schemas import FunctionDocState
 from docspatch.ui.console import console
 from docspatch.utils.errors import CacheError
 from docspatch.utils.fs import atomic_write
 
 __all__ = [
     "DOCS_CACHE_SCHEMA_VERSION",
-    "SCOUT_CACHE_SCHEMA_VERSION",
     "CacheInfo",
     "DocsCache",
     "FileDocState",
     "FunctionDocState",
     "GzipJSONCache",
-    "ScoutCache",
     "cache_key",
 ]
 
@@ -317,80 +315,3 @@ class DocsCache(GzipJSONCache[FileDocState]):
             if prior is None or prior.hash != fn.hash or not prior.has_docstring:
                 targets.append(qualname)
         return targets
-
-
-# ---- Scout cache -----------------------------------------------------------
-
-SCOUT_CACHE_SCHEMA_VERSION = 3
-
-
-class ScoutCache(GzipJSONCache[FileSummary]):
-    """Scout pipeline's file-summary cache. Hash-keyed, schema-versioned."""
-
-    SCHEMA_VERSION = SCOUT_CACHE_SCHEMA_VERSION
-    SUBDIR = "scout"
-    LABEL = "Scout cache"
-
-    def to_dict(self, state: FileSummary) -> dict[str, Any]:
-        """Convert file summary metadata into a dictionary.
-
-        Args:
-            state: The summary state object.
-
-        Returns:
-            A dictionary representation of the summary.
-        """
-        return {
-            "path": state.path,
-            "summary": state.summary,
-            "interfaces": state.interfaces,
-            "relationships": state.relationships,
-            "change_note": state.change_note,
-            "compressed": state.compressed,
-            "content_hash": state.content_hash,
-            "size": state.size,
-            "mtime_ns": state.mtime_ns,
-            "functions": [
-                {
-                    "name": fn.name,
-                    "signature": fn.signature,
-                    "docstring": fn.docstring,
-                    "llm_summary": fn.llm_summary,
-                    "line_start": fn.line_start,
-                    "line_end": fn.line_end,
-                }
-                for fn in state.functions
-            ],
-        }
-
-    def from_dict(self, payload: dict[str, Any]) -> FileSummary:
-        """Create a FileSummary object from raw dictionary data.
-
-        Args:
-            payload: The dictionary containing summary fields.
-
-        Returns:
-            A FileSummary instance.
-        """
-        return FileSummary(
-            path=payload.get("path", ""),
-            summary=payload.get("summary", ""),
-            interfaces=payload.get("interfaces", []),
-            relationships=payload.get("relationships", []),
-            change_note=payload.get("change_note"),
-            compressed=payload.get("compressed", ""),
-            content_hash=payload.get("content_hash", ""),
-            size=payload.get("size", 0),
-            mtime_ns=payload.get("mtime_ns", 0),
-            functions=[
-                FunctionMetadata(
-                    name=fn.get("name", ""),
-                    signature=fn.get("signature", ""),
-                    docstring=fn.get("docstring"),
-                    llm_summary=fn.get("llm_summary"),
-                    line_start=fn.get("line_start", 0),
-                    line_end=fn.get("line_end", 0),
-                )
-                for fn in payload.get("functions", [])
-            ],
-        )

@@ -15,8 +15,6 @@ ALLOWED_STATE_TYPES = [
     ("docspatch.pipelines.docs.state", "CostBreakdown"),
     ("docspatch.pipelines.docs.state", "GeneratedDoc"),
     ("docspatch.pipelines.docs.flags", "RunFlags"),
-    ("docspatch.pipelines.scout.state", "ScoutBatch"),
-    ("docspatch.pipelines.scout.state", "ScoutResult"),
 ]
 
 

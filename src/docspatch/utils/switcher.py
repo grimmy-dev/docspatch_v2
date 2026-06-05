@@ -59,7 +59,7 @@ async def offer_switch(
     store.write_repo(
         {
             "generator_model": resolve_tier_model(new_provider, new_tier),
-            "scout_model": resolve_tier_model(new_provider, "fast"),
+            "analysis_model": resolve_tier_model(new_provider, "fast"),
         }
     )
 

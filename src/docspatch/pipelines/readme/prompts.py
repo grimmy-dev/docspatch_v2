@@ -1,280 +1,221 @@
-"""Prompt assembly templates for single-call and refine-fold README generation."""
+"""Prompt assembly for the three README LLM passes: triage, drill, and generation."""
 
-from dataclasses import dataclass, field
+from docspatch.pipelines.readme.state import PreContext, Surface
 
-from docspatch.pipelines.readme.markers import FileBlock
-from docspatch.utils.project import ProjectFacts
+# ---- shared fragments ------------------------------------------------------
+
+TOOL_DEFS = (
+    "Tools available to this pipeline (you do not call them yourself — you name what you need "
+    "and the pipeline fetches it):\n"
+    "- get_file_surface(path): public functions and classes of a file, with signatures and "
+    "docstrings but no bodies.\n"
+    "- get_function_body(path, function_name): the full implementation of one function, "
+    "compressed. Reserve this for entry points and orchestrators whose behaviour you must "
+    "describe precisely — never request every function.\n"
+)
 
 _GROUND_RULES = (
-    "Write the README the way a senior maintainer writes one for a project they know cold: the "
-    "reader is a working developer who wants to understand and run it in two minutes. Use "
+    "Write the README the way a maintainer who genuinely cares about this project writes one: "
+    "someone who knows it cold, believes it solves a real problem well, and wants a working "
+    "developer to understand it, want it, and run it in a couple of minutes. Use "
     "GitHub-flavoured markdown.\n"
     "\n"
     "Voice:\n"
-    "- Plain, direct, and concrete. Active voice, present tense. Clear sentences, no padding.\n"
+    "- Plain, direct, concrete. Active voice, present tense. No padding.\n"
     "- Address the reader as 'you' when describing usage.\n"
-    "- Lead with substance: say what it does and why you'd reach for it, not how impressive it is.\n"
-    "- No hype and no AI throat-clearing — drop 'This project is designed to…', 'In today's "
-    "world…', 'seamlessly', 'powerful', 'robust', 'comprehensive', 'effortless', and the like.\n"
-    "- Show usage with a runnable command, and explain around it — don't leave a command bare.\n"
+    "- Open by naming the problem this project solves and what makes its approach worth choosing — "
+    "be specific and let real capability carry the interest. Earned conviction, never empty "
+    "superlatives.\n"
+    "- No hype, no AI throat-clearing — drop 'powerful', 'seamlessly', 'robust', 'comprehensive', "
+    "'In today's world…', and the like. Show why it's good by being concrete about what it does, "
+    "not by asserting that it is good.\n"
+    "- Show usage with a runnable command, and explain around it — never leave a command bare.\n"
     "\n"
-    "Be descriptive where it matters, never padded:\n"
-    "- A README is documentation, not a reference card. Give the things a user actually reaches "
-    "for — the main commands, the public API, key configuration, major features — a real "
-    "explanation: what it does, when you'd use it, and any behaviour worth knowing, usually two to "
-    "four sentences. Spend the words where they help.\n"
-    "- Match depth to importance. Do not inflate a trivial or rarely-used entry into a paragraph; a "
-    "minor flag can stay one line. Depth is for what carries weight, not everything.\n"
-    "- You may synthesise that explanation from the module summary, its relationships, and the "
-    "project overview; you are not limited to echoing a one-line note. Connect a piece to the "
-    "workflow it sits in.\n"
-    "- Never make things up. This freedom is for explaining real behaviour only — it never "
-    "licenses inventing concrete specifics (see the grounding rule). When the summaries do not "
-    "support a claim, leave it out. Describe richly; fabricate nothing.\n"
+    "Depth: be genuinely descriptive — a thin README reads like the author didn't care. Give the "
+    "things a user reaches for — main commands, public API, key configuration, the headline "
+    "features — a real explanation: what it does, when you'd reach for it, how it fits the "
+    "workflow, and behaviour worth knowing, typically three to five sentences. Draw the connections "
+    "between pieces so a newcomer sees the whole, not a flat list. Match depth to importance; a "
+    "minor flag stays one line, but never shortchange what carries the project.\n"
     "\n"
-    "Rules:\n"
-    "- Grounding: every concrete specific — command, flag, argument, function name, signature, "
-    "import path, return shape, dependency — must come verbatim from the facts, interfaces, or "
-    "signatures shown. Never invent or guess one. If you have a name but not its signature, show "
-    "the import or describe it in prose rather than fabricate a call. (Prose explanation of "
-    "behaviour is free; only invented specifics are forbidden.)\n"
-    "- Output the markdown document only — no surrounding code fences, no preamble.\n"
-    "- Open with one concrete sentence naming the project and what it does for whom.\n"
-    "- Be specific to this codebase: real modules, commands, and entry points from the facts and "
-    "summaries — never boilerplate that would fit any project.\n"
-    "- Cover, at minimum: a title, a one-line description, install steps, usage grounded in the "
-    "project's declared entry points or public API, and at least one runnable example.\n"
-    "- When a project overview is provided, ground the intro in it and add a short 'How it works' "
-    "(or architecture) section a few sentences long: explain the main pieces and how data or "
-    "control flows between them, synthesised from the overview and the modules' relationships — "
-    "not a list restating each module. This is the section that turns a command list into "
-    "documentation a newcomer can reason about.\n"
-    "- The summaries below are already limited to the project's public surface. Do not add a "
-    "section heading for any module that is not among them.\n"
-    "- When a module gives a function's full signature and docstring, that is the authoritative "
-    "surface: document its arguments and options with the help text shown, and document a new "
-    "entry as deeply as the existing entries around it — never a bare one-liner beside detailed "
-    "siblings.\n"
-    "\n"
-    "Example opening (bad -> good); the good form names a real surface and skips the hype:\n"
-    "  bad:  A powerful, comprehensive tool that seamlessly handles all your needs.\n"
-    "  good: <name> turns OpenAPI specs into typed Python clients — one command, no runtime "
-    "dependencies. Run `<cli> generate api.yaml`.\n"
+    "Grounding: every concrete specific — command, flag, argument, function name, signature, "
+    "import path, dependency — must come verbatim from the context shown. Never invent one. Prose "
+    "explanation of behaviour is free; invented specifics are forbidden. Output the markdown "
+    "document only — no surrounding code fences, no preamble.\n"
 )
 
 
-@dataclass(frozen=True)
-class ReadmeContext:
-    """Everything a README prompt draws on, resolved once per run.
-
-    ``facts`` and ``dependencies`` are populated for root scope only; a
-    subpackage README omits project-level metadata.
-    """
-
-    scope: str
-    dir_tree: str
-    facts: ProjectFacts | None = None
-    dependencies: tuple[str, ...] = ()
-    # Declared entry-point commands the README must document (root scope only);
-    # empty for a library, which makes the coverage check a no-op.
-    entry_points: tuple[str, ...] = ()
-    # Module names tagged internal, which must never appear as a section heading.
-    internal_modules: tuple[str, ...] = ()
-    existing_readme: str | None = None
-    # Rewrite freely for quality (restructure, reword) versus a minimal in-place
-    # refresh that copies unchanged prose verbatim. Both stay anchored to the
-    # existing README so real sections are never lost.
-    rewrite: bool = False
-    # Scout's synthesized architecture/components narrative, root scope only — a
-    # subpackage README stays at its own altitude and skips repo-wide framing.
-    project_overview: str | None = None
-    remarks: str | None = None
-    feedback: tuple[str, ...] = field(default_factory=tuple)
-
-
-def _scope_label(scope: str) -> str:
-    """Describe the README's target in prose for the prompt header.
+def scope_label(scope: str) -> str:
+    """Describe the README's target in prose for a prompt header.
 
     Args:
         scope: Target scope directory.
 
     Returns:
-        A human phrase naming the whole project or a specific package.
+        A phrase naming the whole project or a specific package.
     """
     return "the whole project" if scope in {".", "", "./"} else f"the `{scope}` package"
 
 
-def _facts_block(ctx: ReadmeContext) -> str:
-    """Render the pyproject facts and dependencies, or empty for a subpackage.
+def render_facts(pre: PreContext) -> str:
+    """Render authoritative project facts and dependencies, or empty for a subpackage.
 
     Args:
-        ctx: Current run context.
+        pre: The run backbone.
 
     Returns:
-        A labelled facts section, or an empty string when no facts apply.
+        A labelled facts block, or an empty string when no facts apply.
     """
-    if ctx.facts is None:
+    if pre.facts is None:
         return ""
-    lines = [f"Project name: {ctx.facts.name}"]
-    if ctx.facts.description:
-        lines.append(f"Description: {ctx.facts.description}")
-    lines += [f"{label}: {value}" for label, value in ctx.facts.labelled]
-    if ctx.dependencies:
-        lines.append("Dependencies: " + ", ".join(ctx.dependencies))
+    lines = [f"Project name: {pre.facts.name}"]
+    if pre.facts.description:
+        lines.append(f"Description: {pre.facts.description}")
+    lines += [f"{label}: {value}" for label, value in pre.facts.labelled]
+    if pre.dependencies:
+        lines.append("Dependencies: " + ", ".join(pre.dependencies))
     return "Project facts (authoritative):\n" + "\n".join(lines) + "\n\n"
 
 
-def _overview_block(ctx: ReadmeContext) -> str:
-    """Render scout's project synthesis so the intro builds on it, not from scratch.
+def render_backbone(pre: PreContext) -> str:
+    """Render the facts and change-tagged directory tree shared by every pass.
 
     Args:
-        ctx: Current run context.
+        pre: The run backbone.
 
     Returns:
-        The labelled overview section, or an empty string for a subpackage.
+        The facts plus tagged directory layout.
     """
-    if not ctx.project_overview:
-        return ""
+    return f"{render_facts(pre)}Directory layout (tags mark files changed since the last README):\n{pre.tagged_tree}\n\n"
+
+
+def render_surface(surface: Surface) -> str:
+    """Render one file's public surface as a prompt block.
+
+    Args:
+        surface: The file surface from Tool 2.
+
+    Returns:
+        The path header, module docstring, and each public entry.
+    """
+    lines = [f"### {surface.path}"]
+    if surface.module_doc:
+        lines.append(surface.module_doc.strip())
+    for entry in surface.entries:
+        lines.append(f"- {entry.signature}")
+        if entry.docstring:
+            doc = "\n".join(f"    {line}" for line in entry.docstring.strip().splitlines())
+            lines.append(doc)
+    return "\n".join(lines)
+
+
+def render_surfaces(surfaces: list[Surface]) -> str:
+    """Join several file surfaces into one prompt section.
+
+    Args:
+        surfaces: The surfaces to render, in the order they should appear.
+
+    Returns:
+        The concatenated surface blocks.
+    """
+    return "\n\n".join(render_surface(s) for s in surfaces)
+
+
+# ---- pass prompts ----------------------------------------------------------
+
+
+def build_triage_prompt(pre: PreContext) -> str:
+    """Build the triage prompt: pick the files worth surfacing for this scope.
+
+    Args:
+        pre: The run backbone (tagged tree, facts, tool menu).
+
+    Returns:
+        The complete triage prompt.
+    """
     return (
-        "Project overview (authoritative synthesis — ground the intro and any architecture "
-        "section in this; do not contradict it):\n"
-        f"{ctx.project_overview}\n\n"
+        f"You are scoping a README for {scope_label(pre.scope)}. Select every source file whose "
+        "public surface a thorough README should draw on — entry points and CLI commands, the "
+        "public API, the modules that define what the project does and how its main features work, "
+        "and the orchestrators that tie them together. Err toward inclusion: a slightly wider set "
+        "yields a richer, more accurate README, and surfacing is cheap. Skip only clear noise — "
+        "tests, private plumbing, and files a README would never reference. Tagged files changed "
+        "recently and are likely relevant. Return only repo-relative paths drawn from the tree.\n\n"
+        f"{render_backbone(pre)}"
+        f"{pre.tool_defs}"
     )
 
 
-def _backbone_block(ctx: ReadmeContext) -> str:
-    """Render the project identity every prompt path must carry.
-
-    Bundles the authoritative facts (including declared entry points), the
-    project overview, and the directory layout into one section. It is never
-    sharded and never optional, so no generation path can draft without the
-    project's identity in front of it.
+def build_drill_prompt(pre: PreContext, rendered_surfaces: str, error: str | None = None) -> str:
+    """Build the drill prompt: request needed bodies and synthesize an orientation.
 
     Args:
-        ctx: Current run context.
+        pre: The run backbone.
+        rendered_surfaces: The selected files' surfaces, already rendered.
+        error: A prior bad-plan error to correct, or null on the first attempt.
 
     Returns:
-        The combined facts + overview + directory-tree section.
+        The complete drill prompt.
     """
-    return f"{_facts_block(ctx)}{_overview_block(ctx)}Directory layout:\n{ctx.dir_tree}\n\n"
-
-
-def _existing_block(ctx: ReadmeContext) -> str:
-    """Render the current README so the model builds on it instead of replacing it.
-
-    Both modes stay anchored to the existing file: a refresh edits in place, a
-    rewrite restructures freely — but neither may discard a section that exists
-    only in the README (license, configuration, development, contributing), since
-    the code summaries can never reconstruct those.
-
-    Args:
-        ctx: Current run context.
-
-    Returns:
-        The existing-README section, or an empty string when none exists.
-    """
-    if not ctx.existing_readme:
-        return ""
-    if ctx.rewrite:
-        instruction = (
-            "Existing README — rewrite it: you may restructure sections, reorder, and reword freely "
-            "for clarity and a consistent voice. But this file is the source of truth for everything "
-            "the code summaries do not contain — keep every section that carries real content, "
-            "especially install commands, configuration, license, and development/contributing notes, "
-            "and preserve its badges, links, and the package manager and install commands it uses. Do "
-            "not drop a section just because no summary backs it, and do not invent a replacement for "
-            "one. Fold in any commands, options, or surface the facts and summaries add:"
-        )
-    else:
-        instruction = (
-            "Existing README — revise it in place, do not rewrite it. Keep its structure, section "
-            "order, headings, badges, and links. Treat every unchanged paragraph as a fixed string: "
-            "copy it through byte-for-byte, keeping its exact line breaks, wrapping, punctuation, and "
-            "quoting. Only the specific spans you are updating may differ. Change only what is out of "
-            "date, missing, or gone:\n"
-            "  - Add any part of the project's public surface the facts and summaries document but "
-            "the README omits — whatever form it takes for this project.\n"
-            "  - Correct anything now wrong.\n"
-            "  - Remove documentation for a specific command, module, or feature that no longer "
-            "appears in the facts or summaries — it has been deleted. Leave general sections (install, "
-            "license, contributing, and the like) intact even though no summary backs them."
-        )
-    return f"{instruction}\n{ctx.existing_readme}\n\n"
-
-
-def _instructions_tail(ctx: ReadmeContext) -> str:
-    """Append run-wide remarks and accumulated revise feedback, oldest first.
-
-    Args:
-        ctx: Current run context.
-
-    Returns:
-        The trailing instruction block, or an empty string when there is none.
-    """
-    parts: list[str] = []
-    if ctx.remarks:
-        parts.append(f"Additional instruction: {ctx.remarks}")
-    if ctx.feedback:
-        joined = "\n".join(f"- {note}" for note in ctx.feedback)
-        parts.append(f"Revise per this feedback (apply all):\n{joined}")
-    return ("\n" + "\n\n".join(parts) + "\n") if parts else ""
-
-
-def _summaries_text(blocks: list[FileBlock]) -> str:
-    """Join the selected file-summary blocks into one prompt section.
-
-    Args:
-        blocks: List of file-summary blocks.
-
-    Returns:
-        The concatenated module summaries.
-    """
-    return "\n\n".join(b.body for b in blocks)
-
-
-def build_single_prompt(ctx: ReadmeContext, blocks: list[FileBlock]) -> str:
-    """Build the one-shot prompt used when the scoped slice fits in one call.
-
-    Args:
-        ctx: Resolved facts, tree, and instructions for the run.
-        blocks: The in-scope file-summary blocks.
-
-    Returns:
-        The complete prompt string.
-    """
+    retry = (
+        f"\nYour previous plan was rejected: {error}\nRequest only paths and function names that "
+        "appear in the surfaces below.\n"
+        if error
+        else ""
+    )
     return (
-        f"{_GROUND_RULES}\n"
-        f"Write a README for {_scope_label(ctx.scope)}.\n\n"
-        f"{_backbone_block(ctx)}"
-        f"{_existing_block(ctx)}"
-        f"Module summaries:\n{_summaries_text(blocks)}\n"
-        f"{_instructions_tail(ctx)}"
+        f"You are writing a README for {scope_label(pre.scope)}. Below are the public surfaces of "
+        "the selected files. Two outputs:\n"
+        "1. A required synthesis (4-6 sentences) that orients the README author: the problem the "
+        "project solves and who it's for, what its main entry points and commands do, how the major "
+        "pieces fit together and the data or control flow between them, and any design choice or "
+        "behaviour that makes the project distinctive. Write it as confident, concrete prose — this "
+        "is the spine the README is built on. Always produce it, even if you request no bodies.\n"
+        "2. The implementation bodies you need to describe behaviour precisely and accurately. Be "
+        "generous: request the entry points, the command handlers, the orchestrators, and any "
+        "public function whose real behaviour, options, or output shape the README should state "
+        "exactly rather than guess. Reading the real code is cheap and prevents vague or wrong "
+        "claims. Don't request trivial getters or obvious one-liners, but don't starve the README "
+        "either. Leave the list empty only when the surfaces genuinely already tell the whole "
+        "story.\n"
+        f"{retry}\n"
+        f"{render_backbone(pre)}"
+        f"Selected file surfaces:\n{rendered_surfaces}\n"
     )
 
 
-def build_refine_prompt(ctx: ReadmeContext, draft: str, blocks: list[FileBlock]) -> str:
-    """Build a refine-step prompt that folds the next batch into a running draft.
+def build_generator_prompt(scope: str, woven: str, existing_readme: str | None, feedback: str | None) -> str:
+    """Build the generator prompt from the woven context and the existing README.
 
-    Used only when the slice overflows one call. The full backbone rides every
-    step, so each fold revises with the project's identity in front of it — there
-    is no blind partition draft.
+    The existing README is framed as baseline, tone, and user preference: match
+    its voice and structure, keep hand-written sections, refresh facts from the
+    woven context. A fresh run has none and picks a default voice.
 
     Args:
-        ctx: Resolved facts, tree, and instructions for the run.
-        draft: The running README from the prior fold steps.
-        blocks: The next batch of file-summary blocks to integrate.
+        scope: The repo-relative scope.
+        woven: The assembled context (backbone, synthesis, surfaces, bodies).
+        existing_readme: The current README, or null for a first write.
+        feedback: Accumulated revise feedback, or null.
 
     Returns:
-        The complete prompt string for this fold step.
+        The complete generator prompt.
     """
+    existing = (
+        "Existing README — this is the baseline, the tone reference, and the user's preference. "
+        "Match its voice and structure, preserve every hand-written section (license, configuration, "
+        "contributing, badges, links), and refresh only the facts that the context below updates:\n"
+        f"{existing_readme}\n\n"
+        if existing_readme
+        else ""
+    )
+    tail = f"\nRevise per this feedback (apply all):\n{feedback}\n" if feedback else ""
     return (
         f"{_GROUND_RULES}\n"
-        f"Revise the README draft below for {_scope_label(ctx.scope)} so it also covers "
-        "the additional modules. Keep what is already correct, integrate the new modules "
-        "where they belong, and do not drop existing sections.\n\n"
-        f"{_backbone_block(ctx)}"
-        f"{_existing_block(ctx)}"
-        f"Current draft:\n{draft}\n\n"
-        f"Additional module summaries:\n{_summaries_text(blocks)}\n"
-        f"{_instructions_tail(ctx)}"
+        f"Write a README for {scope_label(scope)}.\n\n"
+        "The context below opens with a shared understanding of the project — internalise it as the "
+        "project's intent and write in alignment with it, then ground every concrete specific in the "
+        "facts, surfaces, and implementations that follow.\n\n"
+        f"{existing}"
+        f"Project context (authoritative — ground every specific in this):\n{woven}\n"
+        f"{tail}"
     )

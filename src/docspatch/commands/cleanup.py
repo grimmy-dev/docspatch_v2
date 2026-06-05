@@ -5,7 +5,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from docspatch.cache import DocsCache, ScoutCache
+from docspatch.cache import DocsCache
+from docspatch.manifest import MANIFEST_NAME
 from docspatch.ui import Prompter, QuestionaryPrompter, console, status
 from docspatch.utils.logging import get_logger
 
@@ -28,13 +29,16 @@ def cleanup_items(repo_root: Path) -> list[CleanupItem]:
         List of cleanup items.
     """
     home = Path.home()
-    cache_root = repo_root / ".docspatch" / "cache"
-    checkpoints = repo_root / ".docspatch" / "checkpoints"
-    repo_cfg = repo_root / ".docspatch" / "config.toml"
+    docspatch_dir = repo_root / ".docspatch"
+    cache_root = docspatch_dir / "cache"
+    checkpoints = docspatch_dir / "checkpoints"
+    manifest = docspatch_dir / MANIFEST_NAME
+    repo_cfg = docspatch_dir / "config.toml"
     global_dir = home / ".docspatch"
     return [
         CleanupItem(f"Caches{_cache_hint(repo_root)}", cache_root),
         CleanupItem(f"Checkpoints{_path_hint(checkpoints)}", checkpoints),
+        CleanupItem(f"Change manifest{_path_hint(manifest)}", manifest),
         CleanupItem(f"Repo config{_path_hint(repo_cfg)}", repo_cfg),
         CleanupItem(f"Global docspatch data (~/.docspatch){_path_hint(global_dir)}", global_dir),
     ]
@@ -49,11 +53,10 @@ def _cache_hint(repo_root: Path) -> str:
     Returns:
         Formatted string with file count and size, or empty string.
     """
-    docs, scout = DocsCache(repo_root).info(), ScoutCache(repo_root).info()
-    count = docs.file_count + scout.file_count
-    if count == 0:
+    docs = DocsCache(repo_root).info()
+    if docs.file_count == 0:
         return ""
-    return f" ({count} files, {_human_bytes(docs.total_size_bytes + scout.total_size_bytes)})"
+    return f" ({docs.file_count} files, {_human_bytes(docs.total_size_bytes)})"
 
 
 def _path_hint(path: Path) -> str:

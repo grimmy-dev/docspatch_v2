@@ -27,9 +27,9 @@ TIER_CATALOGUE: dict[Provider, list[TierInfo]] = {
         TierInfo("best", "gpt-5.5", 5.00, 30.00, "🏆"),
     ],
     "gemini": [
-        TierInfo("fast", "gemini-3.1-flash-lite", 0.25, 1.50, "⚡"),
-        TierInfo("balanced", "gemini-3-flash-preview", 0.50, 3.00, "⚖️"),
-        TierInfo("best", "gemini-3.1-pro-preview", 2.00, 12.00, "🏆"),
+        TierInfo("fast", "gemini-3.1-flash-lite", 0.125, 0.75, "⚡"),
+        TierInfo("balanced", "gemini-3.5-flash", 1.50, 9.00, "⚖️"),
+        TierInfo("best", "gemini-2.5-pro", 1.25, 10.00, "🏆"),
     ],
 }
 

@@ -88,7 +88,7 @@ def persist(store: ConfigStore, selections: Selections) -> None:
         store: The storage destination.
         selections: The config data to save.
     """
-    scout_model = resolve_tier_model(selections.provider, "fast")
+    analysis_model = resolve_tier_model(selections.provider, "fast")
     store.write_global(
         {
             "provider": selections.provider,
@@ -99,7 +99,7 @@ def persist(store: ConfigStore, selections: Selections) -> None:
         {
             "generator_model": selections.generator_model,
             "tone": selections.tone,
-            "scout_model": scout_model,
+            "analysis_model": analysis_model,
         }
     )
 
@@ -314,7 +314,7 @@ def ask_tier(provider: str, p: Prompter) -> str:
     """
     tiers = TIER_CATALOGUE[as_provider(provider)]
     fast_model = resolve_tier_model(provider, "fast")
-    console.print(f"[dim]Scout model (fixed): {fast_model} (Fast tier)[/dim]")
+    console.print(f"[dim]Analysis model (fixed): {fast_model} (Fast tier)[/dim]")
 
     name_width = max(len(t.tier) for t in tiers)
     model_width = max(len(t.model) for t in tiers)
