@@ -1,4 +1,4 @@
-"""Manage the asynchronous generation of docstrings through a distributed state graph."""
+"""Defines the parallel generation graph that batches, requests, and processes docstrings from an LLM client."""
 
 import asyncio
 from collections.abc import Sequence
@@ -16,15 +16,15 @@ from docspatch.utils.errors import ParseFailed, TransientExhausted
 
 
 async def generate_for_batch(ctx: GraphContext, batch: BatchRef, feedback: dict[str, list[str]]) -> list[GeneratedDoc] | None:
-    """Execute one LLM call for a batch of targets, returning generated documents or signaling transient failure.
+    """Query the LLM generator for a batch of docstrings, updating the token usage ledger and handling failures.
 
     Args:
-        ctx: Context providing the LLM generator, token ledger, and concurrency controls.
-        batch: Group of targets to process in a single API call.
-        feedback: Prior correction requests per function.
+        ctx: The documentation pipeline context.
+        batch: The target references to document in a single call.
+        feedback: Prior correction requests mapped by target keys.
 
     Returns:
-        The generated document items or null if the batch requires a retry.
+        The list of generated docstrings, or None if a transient failure occurs.
     """
     items: list[DocstringItem] = []
     refs: list[TargetRef] = []
@@ -87,13 +87,13 @@ async def generate_for_batch(ctx: GraphContext, batch: BatchRef, feedback: dict[
 
 
 def make_generate(ctx: GraphContext):  # noqa: ANN201
-    """Construct the generation node for the state graph with enforced concurrency limits.
+    """Construct an asynchronous generation node that processes a batch of target docstrings with concurrency limits.
 
     Args:
-        ctx: Context used for generation and state management.
+        ctx: The documentation pipeline context.
 
     Returns:
-        The graph node function.
+        The graph node function that executes the batch call.
     """
 
     async def generate(payload: dict) -> GenerateState:
@@ -116,16 +116,16 @@ async def run_generation(
     *,
     initial_feedback: dict[str, list[str]] | None = None,
 ) -> None:
-    """Process all batches, handling generator swaps and retries for unfinished tasks.
+    """Execute parallelized batch generation and coordinate fallback model switching when transient errors occur.
 
     Args:
-        ctx: Context orchestrating the generation process.
-        saver: Database provider for persisting graph state.
-        config: Configuration object for graph execution.
-        pending: List of batches awaiting generation.
-        switch_handler: Optional callback to rotate the generator model.
-        bar: Progress display handle.
-        initial_feedback: Optional map of previous user corrections.
+        ctx: The documentation pipeline context.
+        saver: The persistent storage provider for checkpointing.
+        config: LangGraph execution configuration with thread identifier.
+        pending: List of target batches waiting for generation.
+        switch_handler: The callback to swap LLM clients on error.
+        bar: Optional CLI progress bar to update.
+        initial_feedback: Starting user feedback remarks to incorporate.
     """
 
     def payload_fn(state: dict[str, Any], b: BatchRef) -> dict[str, Any]:

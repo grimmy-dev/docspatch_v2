@@ -1,4 +1,4 @@
-"""Provide commands for viewing and updating repository-level configuration."""
+"""User command to view and edit hierarchical configuration properties."""
 
 import dataclasses
 

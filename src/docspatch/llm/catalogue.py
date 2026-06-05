@@ -1,4 +1,4 @@
-"""Define and resolve available LLM tiers and their model pricing."""
+"""Declares pricing data and mapping utilities for Anthropic, OpenAI, and Gemini models."""
 
 from dataclasses import dataclass
 
@@ -35,7 +35,7 @@ TIER_CATALOGUE: dict[Provider, list[TierInfo]] = {
 
 
 def tier_info(provider: str, tier: str) -> TierInfo:
-    """Fetch technical details for a specific provider and tier.
+    """Retrieve model pricing, identifier, and UI icon for a specific provider tier.
 
     Args:
         provider: Target LLM provider.
@@ -55,7 +55,7 @@ def tier_info(provider: str, tier: str) -> TierInfo:
 
 
 def resolve_tier_model(provider: str, tier: str) -> str:
-    """Map a provider and tier combination to its corresponding model identifier.
+    """Map a provider and tier combination to its active LLM model string.
 
     Args:
         provider: Target provider.
@@ -68,7 +68,7 @@ def resolve_tier_model(provider: str, tier: str) -> str:
 
 
 def tier_for_model(provider: str, model: str) -> Tier:
-    """Identify the performance tier associated with a specific model and provider.
+    """Resolve the quality tier name from a provider's model string.
 
     Args:
         provider: Target provider.

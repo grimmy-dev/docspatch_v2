@@ -1,4 +1,4 @@
-"""Expose tools for analyzing, hashing, and modifying Python source code through AST and CST manipulation."""
+"""Utilities for AST manipulation, source code compression, docstring extraction, and target injection using LibCST."""
 
 import ast
 import hashlib
@@ -7,8 +7,6 @@ from dataclasses import dataclass
 
 import libcst as cst
 
-from docspatch.schemas import FunctionDocState, FunctionMetadata
-
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
 MODULE_QUALNAME = "<module>"
@@ -16,33 +14,6 @@ MODULE_QUALNAME = "<module>"
 
 
 # ---- analysis (ast) ---------------------------------------------------------
-
-
-def scan_functions(source: str) -> dict[str, FunctionDocState]:
-    """Map qualname to function state for every top-level and nested function.
-
-    Returns:
-        A dictionary of function states keyed by their qualified names.
-    """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return {}
-    return scan_functions_in(tree)
-
-
-def scan_functions_in(tree: ast.AST) -> dict[str, FunctionDocState]:
-    """Execute the scan on a provided AST object tree.
-
-    Args:
-        tree: The root node of an existing AST.
-
-    Returns:
-        A dictionary of function states keyed by their qualified names.
-    """
-    result: dict[str, FunctionDocState] = {}
-    _walk_functions(tree, parents=[], out=result)
-    return result
 
 
 def file_hash(source: str | bytes) -> str:
@@ -58,19 +29,6 @@ def file_hash(source: str | bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def hash_function(node: FunctionNode) -> str:
-    """Compute a structural hash of a function, ignoring docstrings and comments.
-
-    Args:
-        node: The function definition AST node.
-
-    Returns:
-        The hexadecimal hash string.
-    """
-    normalized = ast.unparse(_strip_docstring(node))
-    return hashlib.sha256(normalized.encode()).hexdigest()
-
-
 def build_signature(node: FunctionNode) -> str:
     """Generate a canonical function signature string from an AST node.
 
@@ -78,7 +36,7 @@ def build_signature(node: FunctionNode) -> str:
         node: The function definition AST node.
 
     Returns:
-        The reconstructed signature.
+        The reconstructed signature string.
     """
     args = _build_args(node.args)
     prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
@@ -86,93 +44,20 @@ def build_signature(node: FunctionNode) -> str:
     return f"{prefix} {node.name}({', '.join(args)}){ret}"
 
 
-def extract_function_metadata(source: str) -> dict[str, FunctionMetadata]:
-    """Retrieve metadata including signature and location for all functions.
-
-    Returns:
-        A dictionary mapping function names to metadata objects.
-    """
-    if not source.strip():
-        return {}
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return {}
-    result: dict[str, FunctionMetadata] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            result[node.name] = FunctionMetadata(
-                name=node.name,
-                signature=build_signature(node),
-                docstring=ast.get_docstring(node),
-                line_start=node.lineno,
-                line_end=node.end_lineno or node.lineno,
-            )
-    return result
-
-
 def extract_module_docstring(source: str) -> str | None:
-    """Fetch the module-level docstring from a source string.
+    """Fetch the module-level docstring from a Python source string.
+
+    Args:
+        source: The Python source code to parse.
 
     Returns:
-        The docstring text or null if absent or invalid.
+        The extracted docstring text, or None if empty or invalid.
     """
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return None
     return ast.get_docstring(tree)
-
-
-def _walk_functions(node: ast.AST, parents: list[str], out: dict[str, FunctionDocState]) -> None:
-    """Populate the state map by recursing through an AST node.
-
-    Args:
-        node: The root node to inspect.
-        parents: The current nested scope chain.
-        out: The mutable dictionary collecting results.
-    """
-    for child in ast.iter_child_nodes(node):
-        if isinstance(child, ast.ClassDef):
-            _walk_functions(child, [*parents, child.name], out)
-            continue
-        if isinstance(child, FunctionNode):
-            qualname = ".".join([*parents, child.name])
-            doc = ast.get_docstring(child)
-            out[qualname] = FunctionDocState(
-                hash=hash_function(child),
-                has_docstring=bool(doc and doc.strip()),
-                line_start=child.lineno,
-            )
-
-
-def _strip_docstring(node: FunctionNode) -> FunctionNode:
-    """Remove a leading docstring expression from a function body.
-
-    Args:
-        node: The original function node.
-
-    Returns:
-        The modified function node.
-    """
-    if not node.body:
-        return node
-    first = node.body[0]
-    if not (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str)):
-        return node
-    cls = type(node)
-    clone = cls(
-        name=node.name,
-        args=node.args,
-        body=node.body[1:] or [ast.Pass()],
-        decorator_list=node.decorator_list,
-        returns=node.returns,
-        type_comment=node.type_comment,
-        type_params=node.type_params,
-    )
-    ast.copy_location(clone, node)
-    ast.fix_missing_locations(clone)
-    return clone
 
 
 def _build_args(fn_args: ast.arguments) -> list[str]:
@@ -182,7 +67,7 @@ def _build_args(fn_args: ast.arguments) -> list[str]:
         fn_args: The AST argument definition node.
 
     Returns:
-        A list of strings representing each parameter.
+        A list of formatted parameter strings.
     """
     all_args = fn_args.posonlyargs + fn_args.args
     defaults_offset = len(all_args) - len(fn_args.defaults)
@@ -202,7 +87,7 @@ def _build_args(fn_args: ast.arguments) -> list[str]:
 
 
 def _render_arg(arg: ast.arg, default: str | None) -> str:
-    """Format a single standard argument into a string.
+    """Format a single standard argument into a typed or defaulted string representation.
 
     Args:
         arg: The AST argument object.
@@ -220,10 +105,10 @@ def _render_arg(arg: ast.arg, default: str | None) -> str:
 
 
 def _render_star_arg(prefix: str, arg: ast.arg) -> str:
-    """Format a variadic argument with the appropriate star prefix.
+    """Format a variadic parameter with the appropriate star prefix.
 
     Args:
-        prefix: The prefix (e.g., * or **).
+        prefix: The star prefix (e.g., * or **).
         arg: The AST argument object.
 
     Returns:
@@ -239,10 +124,10 @@ def _render_star_arg(prefix: str, arg: ast.arg) -> str:
 
 
 def compress(source: str) -> str:
-    """Minimize source code by stripping non-essential elements.
+    """Minimize source code by stripping non-essential elements using the Squeezer transformer.
 
     Args:
-        source: The raw code string.
+        source: The raw Python code string to compress.
 
     Returns:
         The compressed code string.
@@ -260,7 +145,7 @@ def estimate_tokens(text: str) -> int:
     """Calculate an approximate token count based on string length.
 
     Args:
-        text: The source content.
+        text: The source content string.
 
     Returns:
         The estimated token total.
@@ -279,49 +164,65 @@ class Squeezer(cst.CSTTransformer):
     """
 
     def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
-        """Remove the docstring from the module level.
+        """Remove the module-level docstring during CST transformation.
+
+        Args:
+            original_node: The original Module node.
+            updated_node: The modified Module node.
 
         Returns:
-            The updated module node.
+            The updated Module node with docstrings removed.
         """
         return updated_node.with_changes(body=strip_docstring(updated_node.body))
 
     def leave_IndentedBlock(self, original_node: cst.IndentedBlock, updated_node: cst.IndentedBlock) -> cst.IndentedBlock:
-        """Remove docstrings and normalize indentation to one space.
+        """Remove docstrings and normalize indentation inside block statements.
+
+        Args:
+            original_node: The original IndentedBlock node.
+            updated_node: The modified IndentedBlock node.
 
         Returns:
-            The updated indented block.
+            The updated IndentedBlock node with docstrings removed and indentation normalized.
         """
         body: Sequence[cst.BaseStatement] = strip_docstring(updated_node.body) or [ELLIPSIS_LINE]
         return updated_node.with_changes(body=body, indent=" ")
 
     def leave_EmptyLine(self, original_node: cst.EmptyLine, updated_node: cst.EmptyLine) -> cst.RemovalSentinel:
-        """Remove empty lines from the tree.
+        """Remove empty lines from the CST tree.
+
+        Args:
+            original_node: The original EmptyLine node.
+            updated_node: The modified EmptyLine node.
 
         Returns:
-            A sentinel for removal.
+            A sentinel indicating the node should be removed.
         """
         return cst.RemoveFromParent()
 
     def leave_TrailingWhitespace(
         self, original_node: cst.TrailingWhitespace, updated_node: cst.TrailingWhitespace
     ) -> cst.TrailingWhitespace:
-        """Remove trailing whitespace and inline comments from statements.
+        """Remove trailing whitespace and comments from the node.
+
+        Args:
+            original_node: The original TrailingWhitespace node.
+            updated_node: The modified TrailingWhitespace node.
 
         Returns:
-            The updated trailing whitespace node.
+            The updated TrailingWhitespace node with spacing cleared.
         """
         return updated_node.with_changes(whitespace=cst.SimpleWhitespace(""), comment=None)
 
 
 def strip_docstring[S: cst.BaseStatement](body: Sequence[S]) -> Sequence[S]:
-    """Filter out a leading docstring from a sequence of statements.
+    """Filter out a leading docstring from a sequence of CST statements.
 
     Args:
-        body: A sequence of AST statements.
+        body: A sequence of CST statement nodes.
 
     Returns:
-        The statement sequence with the docstring removed.
+        The statement sequence with the leading docstring removed.
     """
     if body and is_cst_docstring(body[0]):
         return body[1:]
@@ -329,13 +230,13 @@ def strip_docstring[S: cst.BaseStatement](body: Sequence[S]) -> Sequence[S]:
 
 
 def is_cst_docstring(stmt: cst.BaseStatement) -> bool:
-    """Identify if a statement line is a docstring.
+    """Check if a CST statement is a simple string literal representing a docstring.
 
     Args:
-        stmt: The statement to check.
+        stmt: The statement to evaluate.
 
     Returns:
-        True if the statement is a docstring.
+        True if the statement is a docstring, False otherwise.
     """
     if not isinstance(stmt, cst.SimpleStatementLine) or not stmt.body:
         return False
@@ -362,21 +263,28 @@ def insert_docstring(source: str, qualname: str, docstring: str) -> str:
     """Insert a docstring into source code for a given qualified name.
 
     Args:
-        source: The original source code.
-        qualname: The target scope.
-        docstring: The content to insert.
+        source: The original Python source code.
+        qualname: The qualified name of the target node.
+        docstring: The docstring content to inject.
 
     Returns:
-        The source code with the injected docstring.
+        The modified source code with the injected docstring.
     """
     return insert_docstrings(source, items=[DocstringInsert(qualname=qualname, docstring=docstring)])
 
 
 def insert_docstrings(source: str, items: Iterable[DocstringInsert]) -> str:
-    """Inject multiple docstrings simultaneously into the source.
+    """Inject multiple docstrings simultaneously into Python source code.
+
+    Args:
+        source: The original Python source code.
+        items: The collection of docstring insertion specifications.
+
+    Returns:
+        The modified source code with all docstrings injected.
 
     Raises:
-        FunctionNotFoundError: A target name is not found in the source tree.
+        FunctionNotFoundError: A qualified name is specified but not found in the source CST.
     """
     pending = {item.qualname: item.docstring for item in items}
     if not pending:
@@ -397,7 +305,7 @@ class _DocstringInserter(cst.CSTTransformer):
         """Configure the docstring insertion transformer.
 
         Args:
-            targets: Map of qualified names to content.
+            targets: Map of qualified names to docstring contents.
             indent_unit: Indentation string used for the file.
         """
         self.targets = targets
@@ -406,10 +314,14 @@ class _DocstringInserter(cst.CSTTransformer):
         self.matched: set[str] = set()
 
     def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
-        """Insert the module-level docstring if specified.
+        """Insert the module-level docstring if specified in target keys.
+
+        Args:
+            original_node: The original Module node.
+            updated_node: The modified Module node.
 
         Returns:
-            The modified module node.
+            The modified module node with the injected docstring.
         """
         docstring = self.targets.get(MODULE_QUALNAME)
         if docstring is None or MODULE_QUALNAME in self.matched:
@@ -418,27 +330,43 @@ class _DocstringInserter(cst.CSTTransformer):
         return updated_node.with_changes(body=_module_body_with_docstring(updated_node.body, docstring))
 
     def visit_ClassDef(self, node: cst.ClassDef) -> None:
-        """Register the class name in the current path tracker."""
+        """Register the class name in the current scope path tracker.
+
+        Args:
+            node: The ClassDef node being visited.
+        """
         self.path.append(node.name.value)
 
     def leave_ClassDef(self, original_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
-        """Pop the class name from the path tracker.
+        """Pop the class name from the current scope path tracker.
+
+        Args:
+            original_node: The original ClassDef node.
+            updated_node: The modified ClassDef node.
 
         Returns:
-            The class definition node.
+            The ClassDef node.
         """
         self.path.pop()
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
-        """Register the function name in the current path tracker."""
+        """Register the function name in the current scope path tracker.
+
+        Args:
+            node: The FunctionDef node being visited.
+        """
         self.path.append(node.name.value)
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
-        """Insert a docstring if the current scope matches a target.
+        """Insert a matching docstring into the function definition.
+
+        Args:
+            original_node: The original FunctionDef node.
+            updated_node: The modified FunctionDef node.
 
         Returns:
-            The function definition node.
+            The modified FunctionDef node.
         """
         current = ".".join(self.path)
         depth = len(self.path)
@@ -452,10 +380,15 @@ class _DocstringInserter(cst.CSTTransformer):
 
 
 def _body_with_docstring(body: cst.BaseSuite, docstring: str, body_indent: str) -> cst.BaseSuite:
-    """Inject a docstring statement into an indented body.
+    """Prepend or replace a docstring inside an indented CST block.
+
+    Args:
+        body: The IndentedBlock or BaseSuite node.
+        docstring: The docstring text to insert.
+        body_indent: The indentation prefix for inner lines.
 
     Returns:
-        The updated suite node.
+        The modified suite node.
     """
     if not isinstance(body, cst.IndentedBlock):
         return body
@@ -471,8 +404,12 @@ def _body_with_docstring(body: cst.BaseSuite, docstring: str, body_indent: str) 
 def _module_body_with_docstring(body: Iterable[cst.BaseStatement], docstring: str) -> list[cst.BaseStatement]:
     """Prepend a module-level docstring to the statement list.
 
+    Args:
+        body: The iterable of module-level statements.
+        docstring: The docstring text to insert.
+
     Returns:
-        The list of statements.
+        The list of statements with the docstring at the beginning.
     """
     doc_stmt = _make_docstring_statement(docstring, "")
     statements = list(body)
@@ -484,10 +421,14 @@ def _module_body_with_docstring(body: Iterable[cst.BaseStatement], docstring: st
 
 
 def _make_docstring_statement(docstring: str, body_indent: str) -> cst.SimpleStatementLine:
-    """Create a CST statement from a docstring string.
+    """Create a CST statement representing a formatted docstring.
+
+    Args:
+        docstring: The raw docstring content.
+        body_indent: The indentation prefix to apply.
 
     Returns:
-        The resulting statement line node.
+        The statement line node containing the docstring.
     """
     if "\n" not in docstring:
         quoted = f'"""{docstring}"""'
@@ -498,10 +439,14 @@ def _make_docstring_statement(docstring: str, body_indent: str) -> cst.SimpleSta
 
 
 def _indent_inner_lines(docstring: str, body_indent: str) -> str:
-    """Apply indentation to all lines of a multi-line string.
+    """Apply the body indentation prefix to all secondary lines of a multiline docstring.
+
+    Args:
+        docstring: The multiline docstring.
+        body_indent: The indentation prefix.
 
     Returns:
-        The indented docstring string.
+        The indented docstring text.
     """
     lines = docstring.split("\n")
     indented = [lines[0]]

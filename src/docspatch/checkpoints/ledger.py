@@ -1,4 +1,4 @@
-"""Token usage accounting for LLM operations."""
+"""Token consumption logs and accumulators for pipeline executions."""
 
 from __future__ import annotations
 

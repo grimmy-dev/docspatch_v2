@@ -1,4 +1,4 @@
-"""Provide utilities for extracting metadata and filesystem structures from a project."""
+"""Parses pyproject.toml fields, dependencies, and entry point paths."""
 
 import tomllib
 from dataclasses import dataclass
@@ -21,14 +21,14 @@ class ProjectFacts:
 
 
 def get_pyproject_field(pyproject_path: Path, field: str) -> str | None:
-    """Return the value of a [project] field, or None if absent or file missing.
+    """Extract a specific field value from the project table of pyproject.toml.
 
     Args:
-        pyproject_path: Path to the pyproject.toml file.
-        field: Name of the key to look up.
+        pyproject_path: Path of the pyproject.toml file.
+        field: Configuration key within the project table.
 
     Returns:
-        The field value as a string, or null.
+        Field value as a string, or null if missing or invalid.
     """
     if not pyproject_path.exists():
         return None
@@ -41,13 +41,13 @@ def get_pyproject_field(pyproject_path: Path, field: str) -> str | None:
 
 
 def project_facts(repo_root: Path) -> ProjectFacts:
-    """Collect generic project metadata from pyproject.toml, omitting absent fields.
+    """Construct a ProjectFacts instance containing core pyproject.toml metadata.
 
     Args:
-        repo_root: The repository root containing pyproject.toml.
+        repo_root: Base path of the repository.
 
     Returns:
-        Facts with a guaranteed name and only the labelled fields that exist.
+        ProjectFacts instance populated with parsed metadata.
     """
     pyproject = repo_root / "pyproject.toml"
     try:
@@ -72,10 +72,13 @@ def project_facts(repo_root: Path) -> ProjectFacts:
 
 
 def _read_project_table(repo_root: Path) -> dict:
-    """Return the ``[project]`` table from pyproject, or empty on any error.
+    """Parse the project table of pyproject.toml into a dictionary.
+
+    Args:
+        repo_root: Base path of the repository.
 
     Returns:
-        The parsed project table, empty when the file is missing or malformed.
+        Parsed project dictionary, or empty if parsing fails.
     """
     try:
         return tomllib.loads((repo_root / "pyproject.toml").read_text()).get("project", {})
@@ -84,18 +87,13 @@ def _read_project_table(repo_root: Path) -> dict:
 
 
 def entry_point_targets(repo_root: Path) -> set[str]:
-    """Return the dotted module of every declared entry point.
-
-    Covers ``[project.scripts]``, ``[project.gui-scripts]``, and every
-    ``[project.entry-points.*]`` group. The module is the part before ``:`` in a
-    ``module:attr`` object reference; these modules are always README-relevant
-    (the S1 deterministic floor behind the missing-command guarantee).
+    """Extract the target module path of all declared entry points in pyproject.toml.
 
     Args:
-        repo_root: The repository root containing pyproject.toml.
+        repo_root: Base path of the repository.
 
     Returns:
-        The set of dotted module names, empty when no entry points are declared.
+        Set of dotted module strings corresponding to entry points.
     """
     project = _read_project_table(repo_root)
     refs: list[str] = []
@@ -108,18 +106,13 @@ def entry_point_targets(repo_root: Path) -> set[str]:
 
 
 def entry_point_commands(repo_root: Path) -> list[str]:
-    """Return the names of every declared console/GUI script, sorted.
-
-    These are the commands a user types — the README is expected to document
-    them. A project that declares none (a library, a web service started by a
-    framework runner) yields an empty list, which makes the coverage gate a
-    no-op rather than a false failure.
+    """Collect and sort all script and gui-script command names declared in pyproject.toml.
 
     Args:
-        repo_root: The repository root containing pyproject.toml.
+        repo_root: Base path of the repository.
 
     Returns:
-        The sorted script names, empty when none are declared.
+        Sorted list of declared entry point command names.
     """
     project = _read_project_table(repo_root)
     names = {*project.get("scripts", {}), *project.get("gui-scripts", {})}
@@ -127,18 +120,14 @@ def entry_point_commands(repo_root: Path) -> list[str]:
 
 
 def is_entry_point_path(path: str, modules: set[str]) -> bool:
-    """Report whether a repo-relative path implements one of the entry-point modules.
-
-    A dotted module ``pkg.cli`` matches the file ``…/pkg/cli.py`` or the package
-    ``…/pkg/cli/__init__.py``, regardless of a ``src/`` prefix — the match is on
-    the path suffix so any src-layout resolves.
+    """Check if a repository-relative path implements one of the entry point modules.
 
     Args:
-        path: A repo-relative source path from a summary.
-        modules: Dotted entry-point modules from :func:`entry_point_targets`.
+        path: Relative path of the source file.
+        modules: Set of dotted entry point module names.
 
     Returns:
-        True when the path is the target of a declared entry point.
+        True if the file matches an entry point module pattern.
     """
     rel = path.replace("\\", "/")
     for module in modules:
@@ -151,16 +140,13 @@ def is_entry_point_path(path: str, modules: set[str]) -> bool:
 
 
 def project_dependencies(repo_root: Path) -> list[str]:
-    """Return the declared runtime dependencies from pyproject, or an empty list.
-
-    Kept separate from :class:`ProjectFacts` so dependency lines feed the README
-    prompt without ever appearing in the CONTEXT.md preamble.
+    """Retrieve the raw list of project dependency specifications from pyproject.toml.
 
     Args:
-        repo_root: The repository root containing pyproject.toml.
+        repo_root: Base path of the repository.
 
     Returns:
-        The dependency strings exactly as declared, or empty when absent.
+        List of declared dependency requirements.
     """
     pyproject = repo_root / "pyproject.toml"
     try:
@@ -172,14 +158,14 @@ def project_dependencies(repo_root: Path) -> list[str]:
 
 
 def get_dir_tree(root: Path, max_depth: int = 3) -> str:
-    """Return a text directory tree up to max_depth levels deep.
+    """Generate a text representation of the directory structure down to a maximum depth.
 
     Args:
-        root: Root directory to start walking from.
-        max_depth: Maximum levels of the hierarchy to display.
+        root: Starting path to traverse.
+        max_depth: Maximum levels of subdirectory expansion.
 
     Returns:
-        The directory tree structure.
+        Formatted directory tree string.
     """
     lines: list[str] = []
     _walk(root, root, max_depth, 0, lines)
@@ -187,14 +173,14 @@ def get_dir_tree(root: Path, max_depth: int = 3) -> str:
 
 
 def _walk(root: Path, current: Path, max_depth: int, depth: int, lines: list[str]) -> None:
-    """Recursively walk the file system to display project structure.
+    """Traverse subdirectories recursively to construct directory tree lines.
 
     Args:
-        root: Base directory for the traversal.
-        current: Current directory being processed.
+        root: Root boundary of the tree traversal.
+        current: Current directory path in the loop.
         max_depth: Limit of recursion depth.
-        depth: Current recursion depth.
-        lines: List of strings collecting the directory tree lines.
+        depth: Active recursion depth.
+        lines: Buffer list collecting formatted directory lines.
     """
     if depth > max_depth:
         return

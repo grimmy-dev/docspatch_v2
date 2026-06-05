@@ -1,4 +1,4 @@
-"""Provide helpers for interacting with local git repositories."""
+"""Runs and parses shell executions of git configuration and repository history queries."""
 
 import subprocess
 from dataclasses import dataclass
@@ -20,21 +20,21 @@ class GitReader:
     """Read-only git access scoped to ``repo_root``."""
 
     def __init__(self, repo_root: Path) -> None:
-        """Bind the reader to a repository root.
+        """Bind the git client to a specific local repository workspace.
 
         Args:
-            repo_root: The base directory of the repository.
+            repo_root: File system path of the Git workspace root.
         """
         self.repo_root = repo_root
 
     def _capture(self, args: list[str]) -> str | None:
-        """Run a git command and return its stdout, or None when it fails.
+        """Run a git subprocess and return its stripped standard output.
 
         Args:
-            args: Git arguments after the ``git`` executable.
+            args: Command-line options to append after the git command.
 
         Returns:
-            Trimmed stdout, or null when git is missing or exits non-zero.
+            Trimmed standard output of the command, or None if the call fails or git exits non-zero.
         """
         try:
             result = subprocess.run(
@@ -51,45 +51,45 @@ class GitReader:
         return result.stdout.strip()
 
     def is_repo(self) -> bool:
-        """Report whether ``repo_root`` sits inside a git work tree.
+        """Check if the workspace is located inside an initialized Git work tree.
 
         Returns:
-            True when git tracks this directory.
+            True if git reports being in a workspace, False otherwise.
         """
         return self._capture(["rev-parse", "--is-inside-work-tree"]) == "true"
 
     def config(self, key: str) -> str | None:
-        """Fetch a configuration value from the local git installation.
+        """Retrieve a key value from local git configuration records.
 
         Args:
-            key: The git configuration key.
+            key: The configuration setting path to query.
 
         Returns:
-            The configured value or null if unset.
+            The configured value string, or None if the key is unset.
         """
         return self._capture(["config", "--get", key]) or None
 
     def last_commit_touching(self, pathspecs: list[str]) -> str | None:
-        """Return the hash of the most recent commit that changed the given paths.
+        """Find the commit hash of the latest commit that modified selected pathspecs.
 
         Args:
-            pathspecs: Git pathspecs to scope the history to.
+            pathspecs: Workspace paths to filter the history against.
 
         Returns:
-            The commit hash, or null when no commit ever touched the paths.
+            The latest matching commit SHA hash, or None if no commits match.
         """
         out = self._capture(["log", "-1", "--format=%H", "--", *pathspecs])
         return out or None
 
     def commits_since(self, ref: str | None, pathspecs: list[str]) -> list[Commit]:
-        """List commits after ``ref`` that changed the given paths, newest first.
+        """Query Git log to retrieve commits modified after a specific revision.
 
         Args:
-            ref: Exclusive lower bound; null walks the whole history.
-            pathspecs: Git pathspecs to scope the history to.
+            ref: Exclusive starting revision boundary, or null to walk the whole history.
+            pathspecs: List of repository patterns to filter the log.
 
         Returns:
-            The matching commits as hash/subject pairs.
+            List of Commit dataclasses containing matching hash and subject line pairs.
         """
         rev_range = f"{ref}..HEAD" if ref else "HEAD"
         out = self._capture(["log", rev_range, f"--format=%H{_FIELD_SEP}%s", "--", *pathspecs])

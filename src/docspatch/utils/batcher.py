@@ -1,4 +1,4 @@
-"""Provide utilities for batching items based on size limits."""
+"""Partitions work items into size-bounded batches using greedy allocation."""
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -21,10 +21,10 @@ class Batch[T]:
     oversized: bool = False
 
     def __post_init__(self) -> None:
-        """Validate the batch data post-initialization.
+        """Validate internal size limits and item count invariants for standard and oversized batches.
 
         Raises:
-            ValueError: total_size is negative or oversized status is improperly assigned.
+            ValueError: The total size is negative, or an oversized batch contains more or less than one item.
         """
         if self.total_size < 0:
             raise ValueError("total_size must be non-negative")
@@ -40,37 +40,37 @@ class BatchPlan[T]:
 
     @property
     def batch_count(self) -> int:
-        """Calculate the total number of batches in the plan.
+        """Return the total number of processed batches in the plan.
 
         Returns:
-            Integer count.
+            Number of generated batches.
         """
         return len(self.batches)
 
     @property
     def item_count(self) -> int:
-        """Calculate the total number of items distributed across batches.
+        """Calculate the aggregate number of items across all batches.
 
         Returns:
-            Integer count.
+            Sum of items across all batches.
         """
         return sum(len(b.items) for b in self.batches)
 
     @property
     def oversized_count(self) -> int:
-        """Calculate the number of batches marked as oversized.
+        """Count the number of batches categorized as oversized.
 
         Returns:
-            Integer count.
+            Number of oversized batches.
         """
         return sum(1 for b in self.batches if b.oversized)
 
     @property
     def total_size(self) -> int:
-        """Calculate the total size of all items across all batches.
+        """Calculate the cumulative size of all items across all batches.
 
         Returns:
-            Integer count.
+            Sum of all batch sizes.
         """
         return sum(b.total_size for b in self.batches)
 
@@ -80,18 +80,18 @@ def greedy_batches[T](
     size_fn: Callable[[T], int],
     limit: int,
 ) -> BatchPlan[T]:
-    """Partition items into batches limited by a total cost.
+    """Partition a collection of items into batches constrained by a maximum size limit.
 
     Args:
-        items: Collection of atomic items to process.
-        size_fn: Function calculating the cost for an individual item.
-        limit: Maximum allowed cost per batch.
+        items: Sequence of elements to pack.
+        size_fn: Function to compute the numeric footprint of an individual item.
+        limit: Maximum cumulative size allowed in a single batch.
 
     Returns:
-        A plan containing all items organized into appropriately sized batches.
+        A BatchPlan organizing the items into structured batches.
 
     Raises:
-        ValueError: The limit is non-positive or the size function returns a negative value.
+        ValueError: The limit is non-positive or size_fn returns a negative item size.
     """
     if limit <= 0:
         raise ValueError("limit must be positive")

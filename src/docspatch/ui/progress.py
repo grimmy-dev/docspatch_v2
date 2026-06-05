@@ -1,4 +1,4 @@
-"""Enable interactive progress bars for long-running operations."""
+"""Defines custom progress bars and task handles powered by the Rich progress module."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -17,30 +17,42 @@ class BarHandle:
     task: TaskID
 
     def __call__(self, message: str | None = None) -> None:
-        """Advance the progress bar or update its description."""
+        """Advance the task progress and optionally update its description message.
+
+        Args:
+            message: An optional status description update.
+        """
         if message:
             self.bar.update(self.task, description=message)
         self.bar.advance(self.task)
 
     def set_status(self, text: str) -> None:
-        """Update the progress description without advancing progress."""
+        """Update the progress task description without advancing the progress count.
+
+        Args:
+            text: The new description text.
+        """
         self.bar.update(self.task, description=text)
 
     def pause(self) -> None:
-        """Stop the live progress bar output."""
+        """Stop the progress bar display rendering."""
         self.bar.stop()
 
     def resume(self) -> None:
-        """Restart the live progress bar output."""
+        """Resume the progress bar display rendering."""
         self.bar.start()
 
 
 @contextmanager
 def progress_bar(total: int, description: str = "Working") -> Iterator[BarHandle]:
-    """Initialize a context-managed progress bar.
+    """Initialize a transient progress bar context manager.
+
+    Args:
+        total: The total number of steps in the task.
+        description: The title description of the progress task.
 
     Returns:
-        A handle to control the progress bar.
+        An iterator yielding a BarHandle.
     """
     columns = (
         SpinnerColumn(),

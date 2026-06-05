@@ -1,4 +1,4 @@
-"""Local AST tools the analysis model drives: file surfaces (Tool 2) and function bodies (Tool 3)."""
+"""Parses source files using python's AST module to extract public interfaces and compress method bodies."""
 
 import ast
 from pathlib import Path
@@ -8,18 +8,14 @@ from docspatch.source import build_signature, compress, extract_module_docstring
 
 
 def get_file_surface(repo_root: Path, path: str) -> Surface | None:
-    """Return a file's public surface: top-level functions and classes, no bodies.
-
-    Tool 2. Private names (leading underscore) and dunder modules are dropped —
-    a README documents the public surface. Returns null on a missing or
-    unparseable file so the caller can skip it.
+    """Extract public classes and top-level functions from a source file using AST analysis.
 
     Args:
-        repo_root: The repository root.
-        path: Repo-relative source path to surface.
+        repo_root: The repository root directory path.
+        path: The repo-relative path of the target source file.
 
     Returns:
-        The file's public surface, or null when the file is gone or invalid.
+        The extracted file surface structure, or null on error.
     """
     source = _read(repo_root, path)
     if source is None:
@@ -33,21 +29,15 @@ def get_file_surface(repo_root: Path, path: str) -> Surface | None:
 
 
 def get_function_body(repo_root: Path, path: str, function_name: str) -> str | None:
-    """Return the compressed body of a function or method, or null if not found.
-
-    Tool 3. ``compress`` strips docstrings, comments, and blank lines — the same
-    reduction the docs pipeline uses — so the generator sees lean implementation.
-    Matches the first function with the given name at any nesting (methods
-    included). Returns null on a bad fetch (missing file, parse failure, name
-    absent) so the caller can skip without retrying.
+    """Extract and compress the source implementation of a target function.
 
     Args:
-        repo_root: The repository root.
-        path: Repo-relative source path.
-        function_name: Function or method name to extract.
+        repo_root: The repository root directory path.
+        path: The repo-relative path of the target source file.
+        function_name: The name of the function to retrieve.
 
     Returns:
-        The compressed function source, or null when it cannot be fetched.
+        The compressed source code block, or null if not found.
     """
     source = _read(repo_root, path)
     if source is None:
@@ -64,10 +54,13 @@ def get_function_body(repo_root: Path, path: str, function_name: str) -> str | N
 
 
 def _surface_entry(node: ast.stmt) -> SurfaceEntry | None:
-    """Build a surface entry for a public top-level function or class, else null.
+    """Build a surface metadata entry for a public AST node.
+
+    Args:
+        node: The AST statement to process.
 
     Returns:
-        The entry, or null for private names and non-definition statements.
+        The parsed surface entry, or null if the statement is not public.
     """
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and not node.name.startswith("_"):
         return SurfaceEntry("function", node.name, build_signature(node), ast.get_docstring(node))
@@ -77,10 +70,14 @@ def _surface_entry(node: ast.stmt) -> SurfaceEntry | None:
 
 
 def _read(repo_root: Path, path: str) -> str | None:
-    """Read a repo-relative source file, returning null when it is missing.
+    """Read a file's content from the local disk using UTF-8 encoding.
+
+    Args:
+        repo_root: The repository root directory path.
+        path: The repo-relative path to load.
 
     Returns:
-        The file text, or null when the file does not exist or cannot be read.
+        The full file content, or null if it cannot be read.
     """
     try:
         return (repo_root / path).read_text(encoding="utf-8")

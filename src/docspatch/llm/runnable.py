@@ -1,4 +1,4 @@
-"""Implement retryable LLM runnables with usage tracking and validation."""
+"""Supplies the main execution harness for retrying model operations and collecting usage data."""
 
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.exceptions import OutputParserException
@@ -17,7 +17,10 @@ _PARSE_ERRORS = (OutputParserException, ValidationError)
 
 
 def _collected_usage(handler: UsageMetadataCallbackHandler) -> TokenUsage:
-    """Sum the per-model usage a callback handler collected during one call.
+    """Aggregate total tokens tracked across all models queried in a callback handler.
+
+    Args:
+        handler: Langchain callback recording token usage metadata.
 
     Returns:
         Total token usage.
@@ -29,7 +32,7 @@ def _collected_usage(handler: UsageMetadataCallbackHandler) -> TokenUsage:
 
 
 def is_transient(exc: Exception) -> bool:
-    """Check if an exception is retryable.
+    """Determine if an exception represents a retryable rate limit or timeout error.
 
     Args:
         exc: The caught exception.
@@ -42,7 +45,7 @@ def is_transient(exc: Exception) -> bool:
 
 
 def wrap_llm_error(exc: Exception) -> LLMError:
-    """Map a raw provider error to a domain-specific failure exception.
+    """Convert provider exceptions into TransientExhausted or generic LLMError wrappers.
 
     Args:
         exc: The raw exception caught from the LLM provider.
@@ -59,7 +62,7 @@ class TypedRunnable[T]:
     """Wraps a LangChain structured chain with the gate + parse-retry policy."""
 
     def __init__(self, chain: Runnable[str, T], gate: RateLimitGate) -> None:
-        """Initialize the runnable with a chain and a rate limit gate.
+        """Store the LangChain runnable chain and rate limiter on the wrapper instance.
 
         Args:
             chain: The base runnable chain.
@@ -69,7 +72,10 @@ class TypedRunnable[T]:
         self.gate = gate
 
     async def ainvoke(self, prompt: str) -> tuple[T, TokenUsage]:
-        """Invoke the chain, retrying a schema-validation failure exactly once.
+        """Invoke the chain asynchronously and trigger a single schema-validation retry on failure.
+
+        Args:
+            prompt: The input text for the LLM chain.
 
         Returns:
             The parsed value and the accumulated token usage.
@@ -91,7 +97,7 @@ class TypedRunnable[T]:
         return value, _collected_usage(handler)
 
     async def _call(self, prompt: str, handler: UsageMetadataCallbackHandler) -> T:
-        """Execute a gated call and record usage into the provided handler.
+        """Invoke the chain through a rate-limiting gate while recording token usage metadata.
 
         Args:
             prompt: The input text for the LLM chain.

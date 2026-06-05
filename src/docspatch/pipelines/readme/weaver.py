@@ -1,4 +1,4 @@
-"""Assemble the generator context from code artifacts: backbone, synthesis, tiered surfaces, bodies."""
+"""Interleaves directory trees, file surfaces, and compressed function bodies into a consolidated prompt context."""
 
 from dataclasses import replace
 
@@ -8,27 +8,27 @@ from docspatch.utils.project import is_entry_point_path
 
 
 def body_key(path: str, function_name: str) -> str:
-    """Build the dict key under which a drilled body is stored.
+    """Compute a unique string identifier mapping a function to its source file.
 
     Args:
-        path: Repo-relative source path.
-        function_name: The drilled function or method name.
+        path: The repo-relative path of the file.
+        function_name: The name of the target function.
 
     Returns:
-        The ``path::function`` key.
+        A formatted identifier string.
     """
     return f"{path}::{function_name}"
 
 
 def relevance_tier(path: str, entry_point_modules: frozenset[str]) -> int:
-    """Rank a path for surface ordering: entry points, then pipelines, then the rest.
+    """Assign a sorting priority to a file path based on its project role.
 
     Args:
-        path: Repo-relative source path.
-        entry_point_modules: Declared entry-point modules.
+        path: The repo-relative source path.
+        entry_point_modules: A set of entry point modules.
 
     Returns:
-        0 for an entry-point file, 1 for pipeline internals, 2 otherwise.
+        An integer rank defining priority.
     """
     if is_entry_point_path(path, set(entry_point_modules)):
         return 0
@@ -38,19 +38,16 @@ def relevance_tier(path: str, entry_point_modules: frozenset[str]) -> int:
 
 
 def weave(pre: PreContext, synthesis: str | None, surfaces: dict[str, Surface], bodies: dict[str, str]) -> str:
-    """Assemble the generator context, entry-point surfaces first, drilled bodies in full.
-
-    A drilled body supersedes its function's surface stub: the stub is dropped
-    and the full body printed; other functions on the same file keep their stubs.
+    """Blend project synthesis, public surfaces, and drilled source bodies into a single coherent prompt string.
 
     Args:
-        pre: The run backbone.
-        synthesis: The drill orientation paragraph, or null.
-        surfaces: Tool 2 results keyed by path.
-        bodies: Tool 3 results keyed by ``path::function``.
+        pre: The baseline pipeline context.
+        synthesis: The project summary orientation text.
+        surfaces: A map of file paths to extracted public surfaces.
+        bodies: A map of body keys to compressed implementations.
 
     Returns:
-        The woven context string fed to the generator.
+        The fully synthesized context ready for prompting.
     """
     parts = [render_backbone(pre)]
     if synthesis:
@@ -69,10 +66,14 @@ def weave(pre: PreContext, synthesis: str | None, surfaces: dict[str, Surface], 
 
 
 def _without_drilled(surface: Surface, bodies: dict[str, str]) -> Surface:
-    """Drop the surface stubs whose full body was drilled for this file.
+    """Filter out public surface stubs for functions whose implementations have already been extracted in full.
+
+    Args:
+        surface: The public surface definitions of a file.
+        bodies: The collection of fully extracted implementations.
 
     Returns:
-        The surface with drilled entries removed; unchanged when none were drilled.
+        A modified surface object with overlapping stubs removed.
     """
     kept = [e for e in surface.entries if body_key(surface.path, e.name) not in bodies]
     if len(kept) == len(surface.entries):

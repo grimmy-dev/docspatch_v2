@@ -1,1 +1,1 @@
-"""Provide package-level resource management."""
+"""Houses package assets and static configurations used by docspatch templates."""

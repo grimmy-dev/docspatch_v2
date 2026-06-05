@@ -1,4 +1,4 @@
-"""Define custom exception types and error rendering logic for docspatch."""
+"""Defines the application exception hierarchy and terminal error renderers."""
 
 from __future__ import annotations
 
@@ -19,13 +19,13 @@ _CONTEXT_VALUE_LIMIT: Final[int] = 120
 
 
 def _truncate(value: str) -> str:
-    """Shorten a string if it exceeds the length limit for error contexts.
+    """Truncate diagnostic strings that exceed maximum console display lengths.
 
     Args:
-        value: String to potentially shorten.
+        value: String text to potentially shorten.
 
     Returns:
-        The truncated string with a suffix or the original string.
+        The shortened text with a truncation notice, or the original string.
     """
     if len(value) <= _CONTEXT_VALUE_LIMIT:
         return value
@@ -50,12 +50,12 @@ class DocspatchError(Exception):
         hint: str = "",
         context: dict[str, str] | None = None,
     ) -> None:
-        """Initialize a base docspatch exception.
+        """Initialize the base application exception with diagnostic context and resolution advice.
 
         Args:
-            message: The error description.
-            hint: A suggestion for fixing the issue.
-            context: A mapping of relevant diagnostic metadata.
+            message: Explanation of why the exception occurred.
+            hint: Actionable advice on how to resolve the problem.
+            context: Extra key-value diagnostics captured at the failure site.
         """
         super().__init__(message)
         self.message = message
@@ -63,13 +63,13 @@ class DocspatchError(Exception):
         self.context = context or {}
 
     def render(self, debug: bool = False) -> Group:
-        """Generate a visual display of the error for terminal output.
+        """Build a formatted terminal error view highlighting the code, message, and diagnostic context.
 
         Args:
-            debug: Toggle inclusion of raw error context.
+            debug: Flag to output internal key-value diagnostics.
 
         Returns:
-            A rich renderable group.
+            A styled Rich Group containing error lines.
         """
         lines: list[Text] = [Text.assemble((f"[{self.code}] ", "dim red"), (scrub(self.message), "bold red"))]
         if self.hint:
@@ -88,11 +88,14 @@ class GitError(DocspatchError):
 
     @classmethod
     def command_failed(cls, cmd: list[str], stderr: str) -> GitError:
-        """Create an error for a failed shell git command.
+        """Instantiate an error indicating that a subprocess git execution failed.
 
         Args:
-            cmd: The command executed.
-            stderr: The error output.
+            cmd: List of command arguments passed to Git.
+            stderr: Error output captured from git's standard error stream.
+
+        Returns:
+            A GitError instance with command and output diagnostics.
         """
         return cls(f"git command failed: {' '.join(cmd)}", hint=stderr.strip())
 
@@ -104,102 +107,136 @@ class ConfigError(DocspatchError):
 
     @classmethod
     def unknown_tier(cls, value: str) -> ConfigError:
-        """Create an error for an unsupported model tier.
+        """Instantiate an error representing an invalid LLM model tier selection.
 
         Args:
-            value: The invalid tier string.
+            value: The unsupported tier string that was provided.
+
+        Returns:
+            A ConfigError detailing the invalid tier.
         """
         return cls(f"Unknown tier: {value!r}", hint="Choose: fast, balanced, best")
 
     @classmethod
     def unknown_provider(cls, value: str) -> ConfigError:
-        """Create an error for an unsupported LLM provider.
+        """Instantiate an error representing an invalid LLM provider selection.
 
         Args:
-            value: The invalid provider string.
+            value: The unsupported provider string that was provided.
+
+        Returns:
+            A ConfigError detailing the invalid provider.
         """
         return cls(f"Unknown provider: {value!r}", hint="Choose: anthropic, openai, gemini")
 
     @classmethod
     def unknown_key(cls, key: str, valid: list[str]) -> ConfigError:
-        """Create an error for a configuration key that does not exist.
+        """Instantiate an error representing an unrecognized configuration settings name.
 
         Args:
-            key: The invalid key string.
-            valid: A list of allowed configuration keys.
+            key: The invalid setting name.
+            valid: Collection of allowed configuration keys.
+
+        Returns:
+            A ConfigError detailing the unknown key and listing suggestions.
         """
         return cls(f"Unknown config key: {key!r}", hint=f"Valid keys: {', '.join(valid)}")
 
     @classmethod
     def must_be_int(cls, key: str, value: str, exc: Exception) -> ConfigError:
-        """Create an error for a configuration value requiring an integer.
+        """Instantiate an error indicating a configuration value failed integer conversion.
 
         Args:
-            key: The setting key.
-            value: The invalid raw value.
-            exc: The original conversion exception.
+            key: The name of the option.
+            value: The invalid value that could not be cast.
+            exc: The underlying ValueError exception that occurred.
+
+        Returns:
+            A ConfigError capturing the conversion failure details.
         """
         return cls(f"{key} must be an integer (got {value!r})", hint=str(exc))
 
     @classmethod
     def must_be_non_negative(cls, field: str, value: float) -> ConfigError:
-        """Create an error for a numeric configuration value that must be positive.
+        """Instantiate an error indicating a positive numeric configuration was less than zero.
 
         Args:
-            field: The field name.
-            value: The invalid value.
+            field: The name of the invalid setting.
+            value: The negative numeric value provided.
+
+        Returns:
+            A ConfigError capturing the value validation failure.
         """
         return cls(f"{field} must be ≥ 0 (got {value})", hint=f"Pass a value ≥ 0 for {field}.")
 
     @classmethod
     def invalid_api_key(cls, provider: str) -> ConfigError:
-        """Create an error for an API key that failed authentication.
+        """Instantiate an error representing a rejected LLM credential.
 
         Args:
-            provider: The LLM service provider.
+            provider: Name of the service provider rejecting the key.
+
+        Returns:
+            A ConfigError indicating key rejection.
         """
         return cls(f"Invalid {provider} API key.", hint="Check your key and try again.")
 
     @classmethod
     def missing_api_key(cls, provider: str) -> ConfigError:
-        """Create an error for an absent API key.
+        """Instantiate an error indicating a required LLM credential is not set.
 
         Args:
-            provider: The LLM service provider.
+            provider: Name of the provider requiring an API key.
+
+        Returns:
+            A ConfigError indicating key absence.
         """
         return cls(f"No API key configured for {provider}.", hint=f"Run `dp config set api_key_{provider} <key>`.")
 
     @classmethod
     def key_validation_failed(cls, exc: Exception) -> ConfigError:
-        """Create an error for a failed API key validation check.
+        """Instantiate an error wrapping a failed credential validation check.
 
         Args:
-            exc: The reason for the validation failure.
+            exc: The underlying connection or credential validation error.
+
+        Returns:
+            A ConfigError enclosing the verification failure.
         """
         return cls(f"Key validation failed: {exc}", hint="Check your key.")
 
     @classmethod
     def conflicting_flags(cls, a: str, b: str, hint: str) -> ConfigError:
-        """Create an error for two run flags that cannot be combined.
+        """Instantiate an error when mutually exclusive runtime options are selected.
 
         Args:
-            a: The first conflicting flag.
-            b: The second conflicting flag.
-            hint: The explanation.
+            a: First conflicting CLI flag name.
+            b: Second conflicting CLI flag name.
+            hint: Actionable explanation of how to adjust the flags.
+
+        Returns:
+            A ConfigError detailing the flag conflict.
         """
         return cls(f"--{a} and --{b} cannot be used together.", hint=hint)
 
     @classmethod
     def no_runs_to_resume(cls) -> ConfigError:
-        """Create an error when no incomplete run exists to resume."""
+        """Instantiate an error when a user attempts to resume a non-existent execution.
+
+        Returns:
+            A ConfigError indicating there is no run history to pick up.
+        """
         return cls("No incomplete runs to resume.", hint="Start a fresh run with `dp docs`.")
 
     @classmethod
     def headless_no_input(cls, question: str) -> ConfigError:
-        """Create an error when input is requested in a headless mode.
+        """Instantiate an error when an interactive decision is required in a headless execution environment.
 
         Args:
-            question: The prompt that was blocked.
+            question: The text of the prompt that was blocked.
+
+        Returns:
+            A ConfigError indicating interaction was blocked.
         """
         return cls(
             f"Cannot prompt in a non-interactive session: {question!r}",
@@ -215,10 +252,13 @@ class LLMError(DocspatchError):
 
     @classmethod
     def api_failure(cls, exc: Exception) -> LLMError:
-        """Create an error for failures during LLM API interactions.
+        """Instantiate an error wrapping an unhandled API error from an LLM provider.
 
         Args:
-            exc: The underlying API error.
+            exc: The underlying provider API exception.
+
+        Returns:
+            A transient LLMError wrapping the API exception.
         """
         return cls(str(exc), hint="Check your API key and model availability.")
 
@@ -234,11 +274,14 @@ class TransientExhausted(LLMError):
 
     @classmethod
     def after(cls, attempts: int, exc: Exception) -> TransientExhausted:
-        """Create an error when transient retries have been exhausted.
+        """Instantiate an error indicating retries for temporary API errors have been exhausted.
 
         Args:
-            attempts: Number of retries performed.
-            exc: The final error.
+            attempts: Number of retry attempts made before giving up.
+            exc: The final failure exception encountered.
+
+        Returns:
+            A TransientExhausted error instance.
         """
         return cls(str(exc), hint=f"Rate limit: retried {attempts} times.")
 
@@ -261,20 +304,23 @@ class ParseFailed(LLMError):
         context: dict[str, str] | None = None,
         raw_output: str = "",
     ) -> None:
-        """Initialize a parse failure error with raw output captured.
+        """Initialize an error for model response parsing failures, capturing the raw input payload.
 
         Args:
-            raw_output: The unparseable data received from the LLM.
+            raw_output: Unstructured response string received from the model.
         """
         super().__init__(message, hint, context)
         self.raw_output = raw_output
 
     @classmethod
     def after_retry(cls, exc: Exception) -> ParseFailed:
-        """Create an error when parsing continues to fail after retries.
+        """Instantiate an error when model parsing schema checks fail even after retry attempts.
 
         Args:
-            exc: The final schema validation error.
+            exc: The final validation schema exception.
+
+        Returns:
+            A ParseFailed error capturing the schema failure.
         """
         return cls(
             "Model response failed schema validation after one retry.",
@@ -290,48 +336,63 @@ class PathError(DocspatchError):
 
     @classmethod
     def not_found(cls, path: str) -> PathError:
-        """Create an error for a file path that is missing.
+        """Instantiate an error representing a missing file system path.
 
         Args:
-            path: The missing path.
+            path: Missing target path.
+
+        Returns:
+            A PathError denoting a missing target.
         """
         return cls(f"Path not found: {path}", hint="Pass a path that exists, ideally repo-relative.")
 
     @classmethod
     def not_python(cls, path: str) -> PathError:
-        """Create an error for a non-Python file input.
+        """Instantiate an error when a file is processed that is not Python code.
 
         Args:
-            path: The invalid path.
+            path: The path of the non-Python target.
+
+        Returns:
+            A PathError denoting a file type mismatch.
         """
         return cls(f"Not a Python file: {path}", hint="dp docs only operates on .py files.")
 
     @classmethod
     def outside_repo(cls, path: str, repo_root: str) -> PathError:
-        """Create an error for paths that reside outside the repository.
+        """Instantiate an error when a relative path exits the active repository tree.
 
         Args:
-            path: The invalid path.
-            repo_root: The base repository directory.
+            path: Target path residing outside the workspace.
+            repo_root: Active root directory of the repository.
+
+        Returns:
+            A PathError indicating an out-of-bounds target.
         """
         return cls(f"Path is outside the repo: {path}", hint=f"Pass a path under {repo_root}.")
 
     @classmethod
     def absolute_path(cls, abs_path: str, rel_path: str) -> PathError:
-        """Create an error for when an absolute path is provided.
+        """Instantiate an error indicating an absolute path was passed instead of a relative path.
 
         Args:
-            abs_path: The absolute path provided.
-            rel_path: The recommended relative path.
+            abs_path: Absolute path that triggered the error.
+            rel_path: Normalized repository-relative version of the path.
+
+        Returns:
+            A PathError requesting a repository-relative path.
         """
         return cls(f"Use a repo-relative path, not absolute: {abs_path}", hint=f"Try: {rel_path}")
 
     @classmethod
     def ignored(cls, path: str) -> PathError:
-        """Create an error for paths matched by ignore rules.
+        """Instantiate an error when a path matches exclusion patterns.
 
         Args:
-            path: The ignored path.
+            path: Target path that was excluded.
+
+        Returns:
+            A PathError denoting an ignored target.
         """
         return cls(f"Path matches .docsignore: {path}", hint="Use `--no-ignore` to override.")
 
@@ -343,10 +404,13 @@ class ReadmeError(DocspatchError):
 
     @classmethod
     def not_a_directory(cls, path: str) -> ReadmeError:
-        """Create an error when a file path is passed where a directory is required.
+        """Instantiate an error when a file is passed to a directory-only readme command.
 
         Args:
-            path: The offending path.
+            path: The file path that was provided.
+
+        Returns:
+            A ReadmeError denoting a directory is required.
         """
         return cls(f"readme operates on directories, not files: {path}", hint="Pass a directory or omit the path for the repo root.")
 
@@ -358,11 +422,14 @@ class LockError(DocspatchError):
 
     @classmethod
     def run_in_progress(cls, pid: int, started: float) -> LockError:
-        """Create an error when a concurrent run is detected.
+        """Instantiate an error indicating that a concurrent process is running.
 
         Args:
-            pid: The ID of the process holding the lock.
-            started: The timestamp when the current run started.
+            pid: Process ID holding the active lock.
+            started: Epoch timestamp when the existing run began.
+
+        Returns:
+            A LockError indicating concurrent execution is blocked.
         """
         return cls(
             f"Another docs run is in progress (PID {pid}, started {time.ctime(started)}).",
@@ -378,20 +445,26 @@ class CacheError(DocspatchError):
 
     @classmethod
     def read_failed(cls, path: str, exc: Exception) -> CacheError:
-        """Create an error for failures reading the cache.
+        """Instantiate an error representing a cache file read failure.
 
         Args:
-            path: The cache file path.
-            exc: The cause of the error.
+            path: File system path of the unreadable cache.
+            exc: The underlying reading exception.
+
+        Returns:
+            A CacheError indicating cache read failure.
         """
         return cls(f"Failed to read cache for {path}", hint=str(exc))
 
     @classmethod
     def write_failed(cls, path: str, exc: Exception) -> CacheError:
-        """Create an error for failures writing to the cache.
+        """Instantiate an error representing a cache file write failure.
 
         Args:
-            path: The cache file path.
-            exc: The cause of the error.
+            path: File system path of the cache destination.
+            exc: The underlying write exception.
+
+        Returns:
+            A CacheError indicating cache write failure.
         """
         return cls(f"Failed to write cache for {path}", hint=str(exc))

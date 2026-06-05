@@ -1,4 +1,4 @@
-"""Handle repository initialization and configuration setup."""
+"""CLI command for initializing workspace configuration, license choices, and project environment settings."""
 
 from pathlib import Path
 
@@ -17,13 +17,13 @@ def run(
     reconfigure: bool = False,
     prompter: Prompter | None = None,
 ) -> None:
-    """Run the complete initialization flow.
+    """Walk the user through configuring API providers, keys, and documentation licenses.
 
     Args:
-        repo_root: Path to the target repository.
-        global_config_path: Override for the global config file.
-        reconfigure: Force re-prompting of settings.
-        prompter: Interface for user interaction.
+        repo_root: Local directory where settings will be saved.
+        global_config_path: Optional file path overrides for global configurations.
+        reconfigure: Force prompt inputs even if configuration already exists.
+        prompter: Custom prompt interface to gather inputs.
     """
     repo_root = repo_root or Path.cwd()
     p = prompter or QuestionaryPrompter()
@@ -44,14 +44,14 @@ def run(
 
 
 def resolve_store(repo_root: Path, global_config_path: Path | None) -> ConfigStore:
-    """Construct a configuration store based on local and global path inputs.
+    """Load the ConfigStore using the provided or default global paths.
 
     Args:
-        repo_root: Path to the repository root.
-        global_config_path: Custom location for global configuration.
+        repo_root: Local workspace directory path.
+        global_config_path: Alternative file path for the global configuration file.
 
     Returns:
-        Configured store instance.
+        A ConfigStore loaded with regional settings.
     """
     if global_config_path is None:
         return default_store(repo_root)

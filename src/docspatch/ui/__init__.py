@@ -1,4 +1,4 @@
-"""Expose the UI components for user interaction and status reporting."""
+"""Terminal UI: progress bars, panels, diff renderers, and prompters."""
 
 from docspatch.ui.console import console, err_console, status
 from docspatch.ui.panels import cost_panel, kv_panel, warning_panel

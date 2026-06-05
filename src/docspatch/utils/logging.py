@@ -1,4 +1,4 @@
-"""Define logging configuration and retrieval helpers."""
+"""Configures the root logging stream format and retrieves child loggers."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ _DATE_FORMAT = "%H:%M:%S"
 
 
 def configure_logging(debug: bool) -> None:
-    """Set up the main application logging behavior.
+    """Configure the root docspatch logger to write formatted logs to standard error.
 
     Args:
-        debug: Enable verbose debugging output if true.
+        debug: Enable verbose debug logging levels.
     """
     level = logging.DEBUG if debug else logging.WARNING
     logger = logging.getLogger(LOGGER_NAME)
@@ -30,12 +30,12 @@ def configure_logging(debug: bool) -> None:
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Create a scoped logger instance.
+    """Retrieve a child logger under the docspatch namespace.
 
     Args:
-        name: Component name for the logger namespace.
+        name: Suffix name of the logger category.
 
     Returns:
-        A configured logging instance.
+        Configured Logger instance.
     """
     return logging.getLogger(f"{LOGGER_NAME}.{name}")

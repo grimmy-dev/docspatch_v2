@@ -1,4 +1,4 @@
-"""Coordinate the review and commit graph lifecycle for generated documentation."""
+"""Defines nodes and routing logic for reviewing, regenerating, and committing proposed docstrings using interactive CLI feedback loops."""
 
 import asyncio
 from typing import Any, cast
@@ -32,13 +32,19 @@ async def drive_finalize(
     handler: ReviewHandler | None,
     entries: list[GeneratedDoc],
 ) -> FinalizeResult:
-    """Execute the review and commit graph, relaying interrupts to the UI handler.
+    """Execute the state graph loop to review generated docstrings, trigger regenerations, and commit results.
+
+    Args:
+        ctx: The execution GraphContext.
+        saver: The state checkpoint store database helper.
+        handler: The user-facing callback handler rendering reviews.
+        entries: The list of raw generated docstring objects.
 
     Returns:
         The final summary of processed documentation tasks.
 
     Raises:
-        RuntimeError: The graph interrupts without a provided handler.
+        RuntimeError: The state graph interrupts but no interactive review handler is supplied.
     """
     thread_id = f"review-{ctx.run_id}"
     await saver.adelete_thread(thread_id)
@@ -87,10 +93,14 @@ async def drive_finalize(
 
 
 def build_finalize_graph(ctx: GraphContext, saver: AsyncSqliteSaver):  # noqa: ANN201
-    """Define the state transition graph for reviewing and committing changes.
+    """Construct and compile the LangGraph StateGraph containing review, regenerate, and commit nodes.
+
+    Args:
+        ctx: The execution GraphContext.
+        saver: The checkpoint helper database provider.
 
     Returns:
-        The compiled StateGraph.
+        A compiled StateGraph instance ready for invocation.
     """
     g: StateGraph = StateGraph(ReviewState)
     g.add_node("review", make_review(ctx))
@@ -104,7 +114,10 @@ def build_finalize_graph(ctx: GraphContext, saver: AsyncSqliteSaver):  # noqa: A
 
 
 def route_after_review(state: ReviewState) -> list[Send] | str:
-    """Direct state transitions based on the user's review outcome.
+    """Determine whether to end the graph, commit files, or fan out to parallel regeneration tasks.
+
+    Args:
+        state: The current ReviewState dictionary.
 
     Returns:
         The target node or list of fan-out sends.
@@ -119,10 +132,13 @@ def route_after_review(state: ReviewState) -> list[Send] | str:
 
 
 def make_review(ctx: GraphContext):  # noqa: ANN201
-    """Create an interrupt node for user evaluation of generated content.
+    """Construct a state graph node that pauses for interactive user review or automatically decides docstring acceptance.
+
+    Args:
+        ctx: The documentation pipeline context.
 
     Returns:
-        A function compatible with state graph node signature.
+        A node function that processes user feedback and queues necessary retries.
     """
 
     def review(state: ReviewState) -> ReviewState:
@@ -185,10 +201,14 @@ def make_review(ctx: GraphContext):  # noqa: ANN201
 
 
 def rerun_batches(ctx: GraphContext, rerun_ids: list[str]) -> list[BatchRef]:
-    """Organize rerun targets into batches based on token constraints.
+    """Group rejected docstring targets into token-constrained batches for generation retries.
+
+    Args:
+        ctx: The documentation pipeline context.
+        rerun_ids: Unique identifiers of the targets to regenerate.
 
     Returns:
-        A list of BatchRef instances.
+        A list of target batches optimized for API limits.
     """
     refs = [
         TargetRef(rel=rel, qualname=qualname)
@@ -200,13 +220,13 @@ def rerun_batches(ctx: GraphContext, rerun_ids: list[str]) -> list[BatchRef]:
 
 
 def make_regenerate(ctx: GraphContext):  # noqa: ANN201
-    """Construct a regeneration handler to update docstrings based on batch feedback.
+    """Construct an asynchronous state graph node that requests docstring regeneration for a batch using feedback.
 
     Args:
-        ctx: Context managing the documentation graph.
+        ctx: The documentation pipeline context.
 
     Returns:
-        An asynchronous callable that accepts a payload and returns the resulting ReviewState.
+        An asynchronous node function that generates revised docstrings for a batch.
     """
 
     async def regenerate(state: RegenerateInput) -> ReviewState:
@@ -217,13 +237,13 @@ def make_regenerate(ctx: GraphContext):  # noqa: ANN201
 
 
 def make_commit(ctx: GraphContext):  # noqa: ANN201
-    """Create a commit operation to persist accepted docstrings to disk.
+    """Construct a state graph node that writes accepted docstrings to their respective Python source files.
 
     Args:
-        ctx: Context providing the graph structure for the commit process.
+        ctx: The documentation pipeline context.
 
     Returns:
-        A callable that takes a ReviewState and returns the updated state after committing changes.
+        A node function that commits the docstrings to disk and returns the updated state.
     """
 
     def commit(state: ReviewState) -> ReviewState:

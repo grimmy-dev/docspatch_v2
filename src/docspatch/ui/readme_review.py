@@ -1,4 +1,4 @@
-"""Interactive terminal loop for validating and refining README drafts with user feedback."""
+"""Implements interactive user-review loops for editing and accepting README revisions."""
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -33,11 +33,11 @@ class ReviewResult:
 
 
 def render_readme(markdown: str, existing: str | None) -> None:
-    """Show what the review changes: a red/green diff, or a full preview when new.
+    """Render a README document preview or a red/green structural diff.
 
     Args:
-        markdown: The generated document.
-        existing: The current README, or null when none exists yet.
+        markdown: The generated Markdown content.
+        existing: The current README content.
     """
     if existing:
         console.print(Panel(render_diff(existing, markdown), title="README changes", border_style="cyan"))
@@ -46,13 +46,13 @@ def render_readme(markdown: str, existing: str | None) -> None:
 
 
 def _prompt_action(prompter: Prompter) -> str:
-    """Query the user for a revision action selection.
+    """Query the user for a README action selection.
 
     Args:
-        prompter: The interface for terminal user input.
+        prompter: The prompt provider interface.
 
     Returns:
-        The chosen action constant string.
+        The action constant string corresponding to the choice.
     """
     return str(
         prompter.select(
@@ -66,9 +66,6 @@ async def review_readme(
     prompter: Prompter, regenerate: Regenerate, *, existing: str | None = None, max_revisions: int = 3
 ) -> ReviewResult:
     """Loop through README generation, previewing, and user-led revision until acceptance or cancellation.
-
-    A safety bound: after ``max_revisions`` revise rounds the latest draft is
-    accepted and written so the loop can never run unbounded.
 
     Args:
         prompter: The interface for collecting user input and feedback.

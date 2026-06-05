@@ -1,4 +1,4 @@
-"""Manage ignore patterns for filtering files within a repository."""
+"""Contains ignore-rule definitions and file matching utilities based on pathspec patterns."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -34,10 +34,10 @@ DEFAULT_PATTERNS: tuple[str, ...] = (
 
 
 def ensure_docspatch_ignored(repo_root: Path) -> None:
-    """Add required docspatch files to the repository gitignore if missing.
+    """Append required docspatch entries to the repository gitignore file.
 
     Args:
-        repo_root: Repository base directory.
+        repo_root: Base path of the repository.
     """
     gitignore = repo_root / ".gitignore"
     try:
@@ -59,42 +59,53 @@ class DocsIgnore:
 
     @classmethod
     def empty(cls) -> DocsIgnore:
-        """Initialize an ignore object that matches nothing."""
+        """Create an empty ignore instance that matches no file paths.
+
+        Returns:
+            A DocsIgnore instance with no active rules.
+        """
         return cls(spec=pathspec.PathSpec.from_lines("gitignore", []))
 
     @classmethod
     def defaults(cls) -> DocsIgnore:
-        """Initialize an ignore object using only built-in default patterns."""
+        """Create an ignore instance using only the built-in path patterns.
+
+        Returns:
+            A DocsIgnore instance configured with default ignore rules.
+        """
         return cls(spec=pathspec.PathSpec.from_lines("gitignore", DEFAULT_PATTERNS))
 
     def matches(self, rel_path: str) -> bool:
-        """Determine if a file path is ignored.
+        """Check if a repository-relative path matches any configured ignore pattern.
 
         Args:
-            rel_path: Repository-relative file path.
+            rel_path: Posix-style file path relative to the repository root.
 
         Returns:
-            True if the path is matched by ignore rules.
+            True if the path is matched by the ignore patterns.
         """
         return self.spec.match_file(rel_path)
 
     def filter(self, rel_paths: Iterable[str]) -> list[str]:
-        """Filter a list of paths, returning only those not ignored.
+        """Exclude matched paths from an iterable of repository-relative file paths.
 
         Args:
-            rel_paths: Iterable of file paths.
+            rel_paths: Collection of relative file paths to evaluate.
 
         Returns:
-            The list of non-ignored paths.
+            A list of file paths that do not match the ignore rules.
         """
         return [p for p in rel_paths if not self.matches(p)]
 
 
 def load_docsignore(repo_root: Path) -> DocsIgnore:
-    """Load ignoring rules from defaults, gitignore, and user-defined docsignore files.
+    """Merge default, gitignore, and docsignore patterns into a single ignore spec.
 
     Args:
-        repo_root: Repository base directory.
+        repo_root: Root directory of the repository.
+
+    Returns:
+        A combined DocsIgnore pattern matcher.
     """
     gitignore_lines = _read_lines(repo_root / ".gitignore")
     docsignore_lines = _read_lines(repo_root / DOCSIGNORE_FILE)
@@ -103,12 +114,12 @@ def load_docsignore(repo_root: Path) -> DocsIgnore:
 
 
 def _read_lines(path: Path) -> list[str]:
-    """Read non-empty lines from a file path.
+    """Read all file lines from the given path if it exists.
 
     Args:
-        path: File to read.
+        path: Location of the file to load.
 
     Returns:
-        A list of strings or an empty list if the file does not exist.
+        List of lines in the file, or an empty list if missing.
     """
     return path.read_text().splitlines() if path.exists() else []

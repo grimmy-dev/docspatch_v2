@@ -1,4 +1,4 @@
-"""Provide panel templates for displaying metrics and warnings."""
+"""Defines layout panels for displaying key-value structures, warnings, and LLM pricing metrics."""
 
 from collections.abc import Iterable
 
@@ -8,10 +8,15 @@ from rich.text import Text
 
 
 def kv_panel(title: str, items: Iterable[tuple[str, str]], border_style: str = "cyan") -> Panel:
-    """Render a bordered panel containing key-value pairs.
+    """Render a bordered layout panel containing key-value pairs.
+
+    Args:
+        title: The panel title text.
+        items: The key-value pairs to display.
+        border_style: The Rich style color for the panel border.
 
     Returns:
-        The rendered Rich panel.
+        The formatted Rich Panel.
     """
     rows = list(items)
     key_width = max((len(k) for k, _ in rows), default=0)
@@ -20,10 +25,14 @@ def kv_panel(title: str, items: Iterable[tuple[str, str]], border_style: str = "
 
 
 def warning_panel(title: str, message: str) -> Panel:
-    """Render a yellow-bordered warning panel.
+    """Render a yellow-bordered warning panel with a custom message.
+
+    Args:
+        title: The warning panel title.
+        message: The message content.
 
     Returns:
-        The rendered warning panel.
+        The formatted warning Panel.
     """
     return Panel(Text(message), title=title, expand=False, border_style="yellow")
 
@@ -34,10 +43,16 @@ def cost_panel(
     per_file: Iterable[tuple[str, int]] | None = None,
     border_style: str = "cyan",
 ) -> Panel:
-    """Render a summary panel with cost metrics and per-file counts.
+    """Render a structured panel detailing cost metrics and per-file generation counts.
+
+    Args:
+        title: The panel title.
+        rows: The cost metric key-value pairs.
+        per_file: Optional counts of updated functions per relative file path.
+        border_style: The panel border style.
 
     Returns:
-        The rendered cost panel.
+        The formatted cost Panel.
     """
     kv = list(rows)
     width = max((len(k) for k, _ in kv), default=0)

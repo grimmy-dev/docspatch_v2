@@ -1,4 +1,4 @@
-"""Graph state, code-built context, and structured-output schemas for the README pipeline."""
+"""Models the pipeline states, database records, and Pydantic validation schemas for the README generator."""
 
 from dataclasses import dataclass, field
 from pathlib import Path

@@ -1,4 +1,4 @@
-"""Define CLI flags and validation logic for documentation operations."""
+"""Defines options for the docstring pipeline and implements validation, feedback resolution, and plan preview calculations."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from docspatch.cache import DocsCache
 from docspatch.llm import tier_info
 from docspatch.llm.pricing import DOCS_OUTPUT_RATIO, estimate_cost
 from docspatch.ui import build_table, console, kv_panel
@@ -41,10 +40,13 @@ _CONFLICTS = (
 
 
 def validate_run_flags(flags: RunFlags) -> None:
-    """Check configuration for conflicting operational flags.
+    """Raise a ConfigError if incompatible command-line flags are requested together.
+
+    Args:
+        flags: The parsed command-line runtime options.
 
     Raises:
-        ConfigError: Mutually exclusive flags are active.
+        ConfigError: Mutually exclusive options like check and update are active simultaneously.
     """
     active = {
         "check": flags.check,
@@ -62,10 +64,16 @@ def validate_run_flags(flags: RunFlags) -> None:
 
 
 def resolve_remarks(*, is_resume: bool, prior: str | None, requested: str | None, prompter: Prompter | None) -> str | None:
-    """Select the appropriate remarks based on run status and user input.
+    """Select the appropriate instructions to guide docstring generation when resuming an interrupted run.
+
+    Args:
+        is_resume: True if resuming a previous run.
+        prior: The instructions used during the original run.
+        requested: The instructions requested for the current run.
+        prompter: User interface prompter to prompt for resolution.
 
     Returns:
-        The resolved remarks string.
+        The chosen instructions string, or None if no instructions are used.
     """
     if not is_resume:
         return requested
@@ -88,17 +96,24 @@ def resolve_remarks(*, is_resume: bool, prior: str | None, requested: str | None
 # ---- --check preview -------------------------------------------------------
 
 
-def preview_check(files: list[Path], repo_root: Path, cache: DocsCache, provider: str, tier: str) -> bool:
-    """Display a preview of the documentation generation plan.
+def preview_check(files: list[Path], repo_root: Path, prev_stamps: dict[str, tuple[int, int]], provider: str, tier: str) -> bool:
+    """Analyze undocumented Python targets and print a preview of expected changes, token usage, and costs.
+
+    Args:
+        files: Paths to Python source files to check.
+        repo_root: The base directory of the repository.
+        prev_stamps: Stored file modification timestamps used to find changes.
+        provider: The name of the LLM provider.
+        tier: The performance and cost tier of the model.
 
     Returns:
-        True if documentation is required for any target.
+        True if any targets require documentation, False otherwise.
     """
     # Deferred: planner pulls libcst via the source module — keep `flags` light
     # so importing it for RunFlags/validation never pays that cost.
     from docspatch.pipelines.docs.planner import Target, collect_targets
 
-    found = collect_targets(files, repo_root, cache=cache).targets
+    found = collect_targets(files, repo_root, prev_stamps).targets
     if not found:
         console.print("[green]✓[/green] All Python files documented.")
         return False

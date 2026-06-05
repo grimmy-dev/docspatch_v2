@@ -1,4 +1,4 @@
-"""Manage mid-process model switching when rate limits or exhaustion occur."""
+"""Implements fallback mechanisms and prompts to switch LLM providers or models when the primary client fails."""
 
 from dataclasses import dataclass
 
@@ -26,17 +26,17 @@ async def offer_switch(
     current_model: str,
     retry_cb: OnRetry | None = None,
 ) -> SwitchResult | None:
-    """Prompt user to switch provider or tier after exhaustion.
+    """Prompt the user to switch to a different provider or tier after exceeding the current model's retry budget.
 
     Args:
-        store: Config storage.
-        p: Prompter instance.
-        current_provider: The provider that failed.
-        current_model: The model that failed.
-        retry_cb: Optional retry callback.
+        store: Configuration store to update with new settings.
+        p: Prompt interface for terminal interactions.
+        current_provider: Name of the failing provider.
+        current_model: Name of the failing model.
+        retry_cb: Optional retry callback to attach to the new client.
 
     Returns:
-        A new client and tier, or null if the user aborts.
+        A SwitchResult with the new client and tier, or None if the run is aborted.
     """
     console.print(f"[yellow]⚠[/yellow] Model {current_model} on {current_provider} exhausted its retry budget.")
 
@@ -69,13 +69,13 @@ async def offer_switch(
 
 
 def _tier_choices(provider: str) -> dict[str, str]:
-    """Build a label-to-tier mapping for the tier picker.
+    """Build a descriptive label-to-tier lookup dictionary for the tier selection prompt.
 
     Args:
-        provider: Provider name to get tiers for.
+        provider: Name of the LLM provider to retrieve tiers for.
 
     Returns:
-        Dictionary mapping displayed labels to internal tier names.
+        A dictionary mapping user-friendly option strings to tier keys.
     """
     tiers = TIER_CATALOGUE[as_provider(provider)]
     name_width = max(len(t.tier) for t in tiers)

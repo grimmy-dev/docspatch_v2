@@ -1,9 +1,4 @@
-"""Initialize the LLM interface and provide public access to core modules.
-
-``client`` and ``factory`` pull the provider SDKs (langchain-anthropic/openai/
-google), which cost ~1s to import. They load lazily on first attribute access so
-a bare ``dp``, ``dp config``, or a cost-panel import stays fast.
-"""
+"""Packages the LLM layer, lazy-importing submodules on demand."""
 
 from typing import TYPE_CHECKING
 
@@ -49,7 +44,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    """Resolve the SDK-backed names lazily, importing their module on demand.
+    """Import and return a lazy-loaded symbol from the submodules on first access.
 
     Args:
         name: The attribute being accessed on the package.

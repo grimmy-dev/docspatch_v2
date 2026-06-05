@@ -1,4 +1,4 @@
-"""Display session metrics and cost information."""
+"""Functions to print execution metrics, cache hit ratios, and API costs to the terminal console."""
 
 from collections.abc import Iterable
 
@@ -9,14 +9,16 @@ from docspatch.ui.panels import kv_panel
 
 
 def cost_rows(usage: TokenUsage, provider: str, tier: str, *, sunk: bool = False) -> list[tuple[str, str]]:
-    """Generate tabular rows for token usage and costs.
+    """Calculate LLM usage costs to generate structured metric rows for summary panels.
 
     Args:
-        usage: Consumed tokens.
-        sunk: Flag for aborted runs.
+        usage: Total tokens consumed during the run.
+        provider: Name of the LLM provider.
+        tier: Selected model tier determining the rates.
+        sunk: Mark token costs as sunk when an execution is aborted.
 
     Returns:
-        List of string pairs.
+        A list of label and value string pairs displaying token consumption and financial cost.
     """
     cost = actual_cost(provider, tier, usage.input_tokens, usage.output_tokens)
     label = "Tokens (sunk cost)" if sunk else "Tokens in / out"
@@ -27,10 +29,14 @@ def cost_rows(usage: TokenUsage, provider: str, tier: str, *, sunk: bool = False
 
 
 def cache_hit_row(hits: int, total: int) -> tuple[str, str]:
-    """Generate a summary row for cache performance.
+    """Format cache hit statistics into a key-value row for the console summary.
+
+    Args:
+        hits: Number of cache-restored generation requests.
+        total: Total number of generation requests executed.
 
     Returns:
-        Label and formatted ratio string.
+        A key-value pair of strings detailing cache hits and ratio.
     """
     pct = f" ({hits * 100 // total}%)" if total else ""
     return ("Cache hits", f"{hits}/{total}{pct}")
@@ -43,10 +49,13 @@ def render_summary(
     unresolved: Iterable[str] = (),
     border_style: str = "green",
 ) -> None:
-    """Display the summary panel with unresolved items.
+    """Print a structured key-value summary panel along with outstanding unresolved paths.
 
     Args:
-        unresolved: Items left without decisions.
+        title: Header label for the summary panel.
+        rows: List of key-value data rows to render.
+        unresolved: File paths that were left without final decisions.
+        border_style: Styling theme applied to the outer panel boundaries.
     """
     console.print(kv_panel(title, rows, border_style=border_style))
     pending = sorted(unresolved)

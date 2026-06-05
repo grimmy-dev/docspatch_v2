@@ -1,4 +1,4 @@
-"""Deterministic quality checks that gate a README draft before review."""
+"""Verifies generated README drafts against formatting and wording guidelines."""
 
 import re
 from dataclasses import dataclass
@@ -37,15 +37,15 @@ class Finding:
 
 
 def inspect_readme(markdown: str, *, project_name: str | None, entry_points: tuple[str, ...]) -> list[Finding]:
-    """Report quality problems in a README draft.
+    """Analyze a markdown draft to flag code fences, marketing terminology, and missing commands.
 
     Args:
-        markdown: The generated README markdown.
-        project_name: The authoritative project name, or null for a subpackage.
-        entry_points: Declared entry-point commands the README must document.
+        markdown: The generated README markdown text.
+        project_name: The canonical name of the project.
+        entry_points: Command entry points that must be documented.
 
     Returns:
-        Every quality problem found; an empty list means the draft passes.
+        A list of identified style or content issues.
     """
     findings: list[Finding] = []
 
@@ -68,17 +68,14 @@ def inspect_readme(markdown: str, *, project_name: str | None, entry_points: tup
 
 
 def _entry_point_coverage(markdown: str, entry_points: tuple[str, ...]) -> list[Finding]:
-    """Flag any declared entry-point command the README never mentions.
-
-    A no-op for a project that declares no scripts (a library or a service), so
-    only repos that actually ship commands are held to this bar.
+    """Flag any command-line entry point that is not mentioned in the markdown draft.
 
     Args:
-        markdown: The generated README markdown.
-        entry_points: The declared entry-point commands.
+        markdown: The generated README markdown text.
+        entry_points: Declared entry points for command execution.
 
     Returns:
-        One finding per missing command, empty when all are covered.
+        A list of findings for any undocumented command.
     """
     lowered = markdown.lower()
     missing = [cmd for cmd in entry_points if cmd.lower() not in lowered]
@@ -88,13 +85,13 @@ def _entry_point_coverage(markdown: str, entry_points: tuple[str, ...]) -> list[
 
 
 def findings_as_feedback(findings: list[Finding]) -> str:
-    """Fold quality findings into one feedback note the generator can act on.
+    """Aggregate quality findings into a single feedback block for the revision phase.
 
     Args:
-        findings: The problems found in the prior draft.
+        findings: A list of discovered quality issues.
 
     Returns:
-        A single instruction block listing every fix to apply.
+        A markdown instruction block detailing the corrections.
     """
     fixes = "\n".join(f"- {f.detail}" for f in findings)
     return f"Fix these quality issues from the previous draft:\n{fixes}"

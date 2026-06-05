@@ -1,4 +1,4 @@
-"""Handle discovery, validation, and filtering of target files and directories."""
+"""Resolves paths, validates repository boundaries, and finds Python source files."""
 
 from pathlib import Path
 
@@ -13,19 +13,19 @@ def discover_targets(
     *,
     no_ignore: bool = False,
 ) -> list[Path]:
-    """Validate paths and return resolved .py files.
+    """Resolve and validate input paths into a list of absolute Python source files.
 
     Args:
-        paths: List of filesystem paths to analyze.
-        repo_root: Root path of the repository.
-        ignore: Configured ignore patterns.
-        no_ignore: Whether to bypass ignore filters.
+        paths: List of paths to search or evaluate.
+        repo_root: Base path of the repository.
+        ignore: Configured ignore pattern spec.
+        no_ignore: Flag to disable ignore filters.
 
     Returns:
-        The deduplicated list of absolute file paths.
+        List of validated absolute Python file paths.
 
     Raises:
-        PathError: A path does not exist, is outside the repo, is not a .py file, or is ignored.
+        PathError: Paths are empty, files are invalid, or outside repository boundaries.
     """
     if not paths:
         raise PathError.not_found("(no paths)")
@@ -51,17 +51,17 @@ def discover_targets(
 
 
 def ensure_relative(raw: Path, root: Path) -> str:
-    """Reject absolute paths and return the repo-relative POSIX string.
+    """Verify that a path is relative to the repository, raising an error if absolute.
 
     Args:
-        raw: The input path to check.
-        root: The expected base directory.
+        raw: Path to evaluate.
+        root: Base repository directory.
 
     Returns:
-        The relative path string.
+        Relative POSIX string.
 
     Raises:
-        PathError: The path is absolute.
+        PathError: The path is absolute or falls outside the repository tree.
     """
     if raw.is_absolute():
         try:
@@ -73,28 +73,28 @@ def ensure_relative(raw: Path, root: Path) -> str:
 
 
 def ensure_exists(raw: Path, abs_path: Path) -> None:
-    """Raise not_found when abs_path is missing.
+    """Verify that an absolute path exists on the filesystem.
 
     Args:
-        raw: Original input path.
-        abs_path: Resolved absolute path to verify.
+        raw: User-provided input path.
+        abs_path: Resolved absolute path.
 
     Raises:
-        PathError: The path does not exist.
+        PathError: The target file or directory does not exist.
     """
     if not abs_path.exists():
         raise PathError.not_found(str(raw))
 
 
 def ensure_inside_repo(abs_path: Path, root: Path) -> None:
-    """Raise outside_repo when abs_path is not under root.
+    """Confirm that an absolute path lies within the repository directory structure.
 
     Args:
-        abs_path: The path to verify.
-        root: The repository base directory.
+        abs_path: Resolved absolute path to evaluate.
+        root: Repository base directory.
 
     Raises:
-        PathError: The path is outside the repository boundary.
+        PathError: The resolved path is not located within the repository boundary.
     """
     try:
         abs_path.relative_to(root)
@@ -103,16 +103,16 @@ def ensure_inside_repo(abs_path: Path, root: Path) -> None:
 
 
 def validate_file(rel: str, abs_path: Path, ignore: DocsIgnore, no_ignore: bool) -> None:
-    """Apply rules for an explicit file argument.
+    """Verify that a file has a .py extension and is not excluded by ignore filters.
 
     Args:
-        rel: The relative path string.
-        abs_path: The absolute path to check.
-        ignore: Ignore instance to check against.
-        no_ignore: Whether to ignore the ignore filters.
+        rel: Relative file path.
+        abs_path: Absolute file path.
+        ignore: Ignore pattern instance.
+        no_ignore: Flag to disable ignore filters.
 
     Raises:
-        PathError: The file is not a .py file or is explicitly ignored.
+        PathError: The path does not end with .py or is ignored.
     """
     if abs_path.suffix != ".py":
         raise PathError.not_python(rel)
@@ -121,16 +121,16 @@ def validate_file(rel: str, abs_path: Path, ignore: DocsIgnore, no_ignore: bool)
 
 
 def dir_files(rel: str, root: Path, ignore: DocsIgnore, no_ignore: bool) -> list[str]:
-    """Find .py files under rel recursively, minus ignored ones unless no_ignore is set.
+    """List all non-ignored Python source files under a directory recursively.
 
     Args:
-        rel: Relative directory path.
-        root: Repository root path.
-        ignore: Ignore instance.
-        no_ignore: Whether to include ignored files.
+        rel: Relative path to evaluate.
+        root: Base repository directory.
+        ignore: Ignore pattern matcher.
+        no_ignore: Flag to bypass ignore checks.
 
     Returns:
-        List of found relative paths.
+        List of relative paths to discovered python files.
     """
     base = root if rel in {".", ""} else root / rel
     found = sorted(p.relative_to(root).as_posix() for p in base.rglob("*.py"))

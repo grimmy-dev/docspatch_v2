@@ -1,9 +1,4 @@
-"""Define the public interface for the documentation pipeline.
-
-``run_docs`` pulls langgraph + the provider SDKs, so it is exposed lazily: a
-light import of a sibling module (e.g. ``flags`` for ``RunFlags``) does not drag
-the whole pipeline in.
-"""
+"""Exposes the lazy-loaded run_docs entry point for docstring generation."""
 
 from typing import TYPE_CHECKING
 
@@ -14,13 +9,13 @@ __all__ = ["run_docs"]
 
 
 def __getattr__(name: str) -> object:
-    """Load ``run_docs`` from the pipeline module on first access.
+    """Load and return the run_docs pipeline entry point dynamically on first attribute access.
 
     Args:
         name: The attribute being accessed.
 
     Returns:
-        The ``run_docs`` entry point.
+        The run_docs entry point.
 
     Raises:
         AttributeError: The name is not a public export.

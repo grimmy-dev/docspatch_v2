@@ -1,4 +1,4 @@
-"""Define default settings and constants for docspatch configuration."""
+"""Centralized constants containing configuration defaults, validation keys, and target tones."""
 
 from typing import Final
 

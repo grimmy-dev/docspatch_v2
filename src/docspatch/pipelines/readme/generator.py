@@ -1,4 +1,4 @@
-"""Single-call README generator with a deterministic quality-gate auto-revision."""
+"""Draft and refine README documents by wrapping LLM execution in quality validation rules."""
 
 from __future__ import annotations
 
@@ -26,16 +26,16 @@ class ReadmeGenerator(Protocol):
     async def generate(
         self, *, pre: PreContext, woven: str, existing_readme: str | None, feedback: str | None
     ) -> tuple[str, TokenUsage]:
-        """Produce a README and report the tokens its calls consumed.
+        """Generate a markdown README and calculate the token usage incurred during execution.
 
         Args:
-            pre: The run backbone (scope, facts, entry points).
-            woven: The assembled context the README is grounded in.
-            existing_readme: The current README, or null for a first write.
-            feedback: Accumulated revise feedback, or null.
+            pre: The contextual pre-context mapping repo metadata and tree structure.
+            woven: The aggregated code context gathered during code drill.
+            existing_readme: The current README content of the repository if present.
+            feedback: Refinement suggestions collected from prior rounds.
 
         Returns:
-            The README markdown and the total token usage.
+            A tuple pairing the output markdown string and token consumption statistics.
         """
         ...
 
@@ -44,30 +44,26 @@ class LLMReadmeGenerator:
     """LLM-backed generator: one call, plus one auto-revision if a quality check trips."""
 
     def __init__(self, client: LLMClient) -> None:
-        """Bind the generator to a structured-output client.
+        """Initialize the generator with an LLM client structured around the README output schema.
 
         Args:
-            client: The LLM client used for every call.
+            client: The LLM client interface utilized for generation.
         """
         self.chain = client.with_structured_output(ReadmeOutput)
 
     async def generate(
         self, *, pre: PreContext, woven: str, existing_readme: str | None, feedback: str | None
     ) -> tuple[str, TokenUsage]:
-        """Draft the README, then auto-revise once if it trips a quality check.
-
-        The deterministic gate keeps obvious defects (marketing language, a
-        missing title, an unnamed project, a missing entry-point command) from
-        reaching the reviewer, so the manual revise loop is left for polish.
+        """Draft a README and execute automated revisions if structured findings reveal quality issues.
 
         Args:
-            pre: The run backbone.
-            woven: The assembled context.
-            existing_readme: The current README, or null.
-            feedback: Accumulated revise feedback, or null.
+            pre: The contextual pre-context mapping repo metadata.
+            woven: The codebase context compiled during triage and drill phases.
+            existing_readme: The preexisting repository README, or null.
+            feedback: Constructive feedback from prior generations.
 
         Returns:
-            The README markdown and the total token usage across every call.
+            A tuple consisting of the final markdown draft and cumulative token usage.
         """
         result, usage = await self.chain.ainvoke(build_generator_prompt(pre.scope, woven, existing_readme, feedback))
         markdown = result.markdown

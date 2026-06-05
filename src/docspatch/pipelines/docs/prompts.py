@@ -1,4 +1,4 @@
-"""Generate prompt strings for docstring creation tasks using specific formatting guidelines and tone requirements."""
+"""Formatter utilities and templates to generate LLM instructions and check docstrings against style guardrails."""
 
 import re
 
@@ -60,13 +60,13 @@ class DocstringItem(BaseModel):
 
 
 def render_item(item: DocstringItem) -> str:
-    """Format a specific target as an input entry in the generation prompt.
+    """Format a code target into a text section for an LLM prompt.
 
     Args:
-        item: Target data including source code and optional feedback.
+        item: Code target details and historical feedback notes.
 
     Returns:
-        Formatted entry string.
+        Plaintext block with key, signature, body, and feedback comments.
     """
     head = f"--- id: {item.key} ---\nSignature:\n{item.signature}\n\nBody:\n{item.body}"
     if not item.feedback:
@@ -76,25 +76,25 @@ def render_item(item: DocstringItem) -> str:
 
 
 def contains_banned_phrase(text: str) -> bool:
-    """Check text for forbidden phrasing on word boundaries.
+    """Determine if a string contains any phrasing explicitly prohibited in docstrings.
 
     Args:
-        text: String to evaluate.
+        text: Text string to evaluate.
 
     Returns:
-        True when a banned meta-phrase appears as a whole word or phrase.
+        True if a forbidden phrase is detected, false otherwise.
     """
     return _BANNED_RE.search(text.lower()) is not None
 
 
 def opens_with_weak_verb(text: str) -> bool:
-    """Check whether the first word of a description is a vague opener.
+    """Determine if a string begins with a vague action verb.
 
     Args:
-        text: The rendered description or docstring to inspect.
+        text: Text string to evaluate.
 
     Returns:
-        True when the leading word is one of the weak openers.
+        True if the leading word is in the weak verb set, false otherwise.
     """
     stripped = text.strip()
     if not stripped:
@@ -103,13 +103,13 @@ def opens_with_weak_verb(text: str) -> bool:
 
 
 def needs_rewrite(text: str) -> bool:
-    """Report whether a generated docstring trips a style guardrail.
+    """Identify whether a candidate docstring fails quality checks and must be regenerated.
 
     Args:
-        text: The rendered docstring to check.
+        text: Generated docstring text.
 
     Returns:
-        True when it contains a banned phrase or opens with a weak verb.
+        True if the docstring violates any style rule, false otherwise.
     """
     return contains_banned_phrase(text) or opens_with_weak_verb(text)
 
@@ -151,15 +151,15 @@ DOCSTRING_GUIDANCE = (
 
 
 def build_batch_docstring_prompt(items: list[DocstringItem], tone: str, remarks: str | None = None) -> str:
-    """Create a complete prompt text for a batch of documentation targets.
+    """Compose a comprehensive system prompt and instruction list for a batch of documentation targets.
 
     Args:
-        items: List of items requiring docstrings.
-        tone: Requested stylistic tone.
-        remarks: Additional instructions to apply to all targets.
+        items: Collection of target elements requiring docstrings.
+        tone: Target writing style name.
+        remarks: Extra custom instructions to prepend to the batch prompt.
 
     Returns:
-        The constructed prompt.
+        The fully formatted prompt string ready for LLM consumption.
     """
     tone_line = TONES.get(tone, TONES[DEFAULT_TONE])
     sections = "\n\n".join(render_item(item) for item in items)

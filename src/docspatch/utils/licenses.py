@@ -1,4 +1,4 @@
-"""Provide access to standard software license templates."""
+"""Loads standard license templates from package resources and inserts copyright headers."""
 
 from importlib.resources import files
 
@@ -19,24 +19,24 @@ _LICENSE_DIR = files("docspatch.resources").joinpath("licenses")
 
 
 def available() -> list[str]:
-    """List the identifiers for all supported licenses.
+    """Get the identifiers of all supported licenses.
 
     Returns:
-        A list of license names.
+        List of standard license identifier strings.
     """
     return list(LICENSE_IDS)
 
 
 def insert_copyright(body: str, name: str, year: int) -> str:
-    """Add a copyright line after the license title if absent.
+    """Insert a copyright notice line immediately below the license header if missing.
 
     Args:
-        body: The original license text.
-        name: The copyright holder name.
-        year: The copyright year.
+        body: Full text of the license template.
+        name: Copyright holder's name.
+        year: Copyright declaration year.
 
     Returns:
-        The updated license text.
+        Modified license text containing the copyright notice.
     """
     if "Copyright (c)" in body:
         return body
@@ -48,13 +48,13 @@ def insert_copyright(body: str, name: str, year: int) -> str:
 
 
 def text(name: str) -> str | None:
-    """Retrieve the full text of a specific license.
+    """Load the template text of a supported license from package resources.
 
     Args:
-        name: License identifier.
+        name: Supported license identifier.
 
     Returns:
-        The text content or null if unavailable.
+        Content of the license text file, or null if not found.
     """
     if name not in LICENSE_IDS:
         return None

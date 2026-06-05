@@ -1,4 +1,4 @@
-"""Provide utilities for estimating and calculating LLM costs."""
+"""Declares token estimation and actual pricing models to calculate run costs."""
 
 from dataclasses import dataclass
 
@@ -20,7 +20,7 @@ class CostEstimate:
 
     @property
     def total(self) -> float:
-        """Return the sum of input and output costs.
+        """Calculate the total combined cost of input and output tokens.
 
         Returns:
             Total cost.
@@ -34,7 +34,7 @@ def estimate_cost(
     input_tokens: int,
     output_ratio: float = DEFAULT_OUTPUT_RATIO,
 ) -> CostEstimate:
-    """Calculate the projected cost for a pipeline run.
+    """Predict the dollar cost of a run using an expected output-to-input token ratio.
 
     Args:
         provider: LLM provider name.
@@ -61,7 +61,13 @@ def estimate_cost(
 
 
 def actual_cost(provider: str, tier: str, input_tokens: int, output_tokens: int) -> CostEstimate:
-    """Compute the final cost based on actual measured tokens.
+    """Compute the exact cost of an executed model call using physical token usage counts.
+
+    Args:
+        provider: Target LLM provider.
+        tier: Model quality tier.
+        input_tokens: Measured input tokens.
+        output_tokens: Measured output tokens.
 
     Returns:
         Cost estimate object.

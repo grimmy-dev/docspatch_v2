@@ -1,1 +1,1 @@
-"""Implementations of CLI command operations."""
+"""Orchestration commands and subcommands for file operations."""

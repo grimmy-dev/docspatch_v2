@@ -1,4 +1,4 @@
-"""Render a before/after text comparison as a red/green line diff."""
+"""Implements a diff renderer that formats code changes with Rich styles."""
 
 import difflib
 
@@ -10,14 +10,14 @@ _STYLES = {"+ ": ("green", "+"), "- ": ("red", "-"), "  ": ("dim", " ")}
 
 
 def render_diff(before: str, after: str) -> Text:
-    """Build a line diff of two texts, additions in green and removals in red.
+    """Build a line diff showing additions in green and removals in red.
 
     Args:
-        before: The prior text (empty when nothing existed yet).
+        before: The prior text.
         after: The new text.
 
     Returns:
-        A Rich Text with one styled line per diff line; unchanged lines are dim.
+        A Rich Text object with styled diff output.
     """
     text = Text()
     for line in difflib.Differ().compare(before.splitlines(), after.splitlines()):

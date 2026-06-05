@@ -1,5 +1,5 @@
 """Content-hash change manifest: one baseline record per pipeline, diffed each
-run to learn what changed. Pipelines own disjoint records in one shared file."""
+run to detect changes. Pipelines own disjoint records in one shared file."""
 
 import gzip
 import json
@@ -16,11 +16,7 @@ MANIFEST_NAME = "manifest.json.gz"
 
 
 def semantic_hash(source: str) -> str:
-    """Hash source ignoring formatting, comments, and docstrings.
-
-    ``compress`` strips docstrings, comments, and blank lines and normalizes
-    indentation, so a docstring-only edit (what ``dp docs`` writes) leaves the
-    hash unchanged and never flags a README stale.
+    """Generate a file hash from a compressed source string that has comments and docstrings stripped.
 
     Args:
         source: Raw Python source text.
@@ -45,7 +41,7 @@ class ChangeSet:
 
     @property
     def changed(self) -> list[str]:
-        """Paths the pipeline should treat as stale (added plus updated).
+        """Collect the list of all added and updated file paths.
 
         Returns:
             The union of added and updated paths.
@@ -54,7 +50,7 @@ class ChangeSet:
 
     @property
     def empty(self) -> bool:
-        """Whether nothing changed at all.
+        """Verify if there are absolutely no added, updated, or removed file paths in this set.
 
         Returns:
             True when no path was added, updated, or removed.
@@ -70,7 +66,7 @@ class ChangeManifest:
     """
 
     def __init__(self, repo_root: Path) -> None:
-        """Bind the manifest to a repository's ``.docspatch`` directory.
+        """Resolve the filepath of the gzipped JSON manifest relative to the repository root.
 
         Args:
             repo_root: The repository root.
@@ -78,13 +74,13 @@ class ChangeManifest:
         self.path = repo_root.resolve() / ".docspatch" / MANIFEST_NAME
 
     def baseline(self, pipeline: str) -> dict[str, str] | None:
-        """Return a pipeline's stored hashes, or null when it never succeeded.
+        """Retrieve the mapped baseline hashes from the last successful run of a specific pipeline.
 
         Args:
-            pipeline: The pipeline's record key (e.g. ``"readme"``).
+            pipeline: The pipeline's record key (e.g. "readme").
 
         Returns:
-            The stored ``path -> hash`` map, or null on a first-ever run.
+            The stored path-to-hash map, or null on a first-ever run.
         """
         record = self._load().get(pipeline)
         if record is None:
@@ -93,11 +89,7 @@ class ChangeManifest:
         return {str(k): str(v) for k, v in hashes.items()}
 
     def stamps(self, pipeline: str) -> dict[str, tuple[int, int]]:
-        """Return stored ``path -> (size, mtime_ns)`` for fast-skip hashing.
-
-        These let a run reuse a stored hash for an unchanged file instead of
-        re-reading and re-compressing it. Empty when the pipeline never stored
-        stamps, which simply forces a recompute.
+        """Load cached file sizes and modification times for skipping redundant hashing.
 
         Args:
             pipeline: The pipeline's record key.
@@ -109,14 +101,38 @@ class ChangeManifest:
         stamps = record.get("stamps", {})
         return {str(k): (int(v[0]), int(v[1])) for k, v in stamps.items() if len(v) == 2}
 
-    def diff(self, pipeline: str, current: dict[str, str]) -> ChangeSet:
-        """Classify current hashes against a pipeline's baseline.
-
-        A first-ever run (no baseline) treats every current path as added.
+    def compute_state(self, pipeline: str, root: Path, paths: list[str]) -> tuple[dict[str, str], dict[str, tuple[int, int]]]:
+        """Generate current semantic hashes and stat stamps for a list of repository files.
 
         Args:
             pipeline: The pipeline's record key.
-            current: The freshly computed ``path -> semantic_hash`` map.
+            root: The repository root the paths are relative to.
+            paths: Repo-relative file paths to hash.
+
+        Returns:
+            The path-to-semantic_hash and path-to-(size, mtime_ns) maps.
+        """
+        prev_hashes = self.baseline(pipeline) or {}
+        prev_stamps = self.stamps(pipeline)
+        hashes: dict[str, str] = {}
+        stamps: dict[str, tuple[int, int]] = {}
+        for p in paths:
+            st = (root / p).stat()
+            stamp = (st.st_size, st.st_mtime_ns)
+            cached = prev_hashes.get(p)
+            if cached is not None and prev_stamps.get(p) == stamp:
+                hashes[p] = cached
+            else:
+                hashes[p] = semantic_hash((root / p).read_text(encoding="utf-8"))
+            stamps[p] = stamp
+        return hashes, stamps
+
+    def diff(self, pipeline: str, current: dict[str, str]) -> ChangeSet:
+        """Compare current hashes against baseline records to categorize additions, modifications, and deletions.
+
+        Args:
+            pipeline: The pipeline's record key.
+            current: The freshly computed path-to-semantic_hash map.
 
         Returns:
             The added, updated, and removed paths.
@@ -128,16 +144,12 @@ class ChangeManifest:
         return ChangeSet(added=sorted(added), updated=sorted(updated), removed=sorted(removed))
 
     def commit(self, pipeline: str, current: dict[str, str], stamps: dict[str, tuple[int, int]] | None = None) -> None:
-        """Replace a pipeline's baseline with the current hashes and a fresh stamp.
-
-        Called only on accept/write, so a cancelled run leaves the baseline
-        untouched and the next run re-detects the same changes. ``stamps`` are
-        stored alongside so the next run can fast-skip unchanged files.
+        """Save the updated hashes and file system stamps atomically into the compressed manifest.
 
         Args:
             pipeline: The pipeline's record key.
-            current: The ``path -> semantic_hash`` map to store as the new baseline.
-            stamps: Optional ``path -> (size, mtime_ns)`` for fast-skip hashing.
+            current: The path-to-semantic_hash map to store as the new baseline.
+            stamps: Optional path-to-(size, mtime_ns) for fast-skip hashing.
 
         Raises:
             CacheError: Writing the manifest fails.
@@ -153,11 +165,13 @@ class ChangeManifest:
             raise CacheError.write_failed(str(self.path), exc) from exc
 
     def _load(self) -> dict[str, dict]:
-        """Read every pipeline record, treating any corruption as absent.
+        """Read and decompress the manifest file from disk, returning empty data if it is missing or corrupted.
 
         Returns:
-            The full ``pipeline -> record`` map, empty when the file is missing
-            or unreadable.
+            The full pipeline-to-record map, empty when the file is missing or unreadable.
+
+        Raises:
+            CacheError: Reading the manifest fails due to OSError.
         """
         try:
             raw = self.path.read_bytes()

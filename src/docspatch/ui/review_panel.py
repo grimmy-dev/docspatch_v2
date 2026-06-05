@@ -1,4 +1,4 @@
-"""Manage the interactive review session for generated docstrings."""
+"""Contains UI components, layout structures, and preview formatters for the interactive terminal docstring review session."""
 
 import ast
 from dataclasses import dataclass, field, replace
@@ -26,7 +26,7 @@ NAME_TRUNC = 22
 
 
 def short_path(rel: str) -> str:
-    """Return parent directory and filename for UI display.
+    """Format a relative file path to show only the parent directory and filename.
 
     Args:
         rel: Full path string.
@@ -75,7 +75,7 @@ class ReviewEntry:
 
     @property
     def id(self) -> str:
-        """Generate a unique identifier for the review entry.
+        """Combine the file path and qualified name into a unique identifier key.
 
         Returns:
             Identifier string formed by relative path and qualified name.
@@ -99,7 +99,7 @@ class Choice:
     aborted: bool = False
 
     def as_dict(self) -> dict:
-        """Export the choice attributes as a dictionary.
+        """Convert the gathered user decisions and edits into a primitive dictionary.
 
         Returns:
             Dictionary representation of choices.
@@ -120,7 +120,7 @@ CONFLICT_ABORT = "abort"
 
 
 def prompt_conflict(prompter: Prompter, file: str) -> dict:
-    """Query how to handle a file modified on disk since the run began.
+    """Prompt the user to choose whether to skip, overwrite, or abort when a file was changed on disk.
 
     Args:
         prompter: Interface for user input.
@@ -162,7 +162,7 @@ def review_session(
     prompter: Prompter,
     allow_rerun: bool,
 ) -> dict:
-    """Render the review interface and process user choices.
+    """Run the interactive review UI to gather, cache, and apply docstring decisions.
 
     Args:
         entries: List of docstrings to review.
@@ -231,7 +231,7 @@ def run_review(
     prompter: Prompter,
     allow_rerun: bool,
 ) -> Choice:
-    """Drive the interaction loop for accepting, rejecting, or rerunning items.
+    """Drive the primary interaction loop, prompting for bulk decisions or walking individual entries.
 
     Args:
         items: List of reviewable entries.
@@ -302,7 +302,7 @@ def run_review(
 
 
 def top_prompt(prompter: Prompter, *, total: int, remaining_count: int, reviewed_count: int) -> str:
-    """Render the main menu, displaying completion progress.
+    """Prompt the user to decide between bulk acceptance, one-by-one review, or aborting the session.
 
     Args:
         prompter: Interface for user input.
@@ -337,7 +337,7 @@ def walk_items(
     already_reviewed: int,
     allow_rerun: bool,
 ) -> bool:
-    """Iterate through remaining items for manual review.
+    """Iterate sequentially over remaining entries, presenting action menus and capturing feedback or edits.
 
     Args:
         remaining: Unreviewed items.
@@ -375,7 +375,7 @@ def walk_items(
 
 
 def item_menu(item: ReviewEntry, *, allow_rerun: bool) -> dict[str, str]:
-    """Construct the action menu for a specific item.
+    """Build the selective mapping of action labels to identifiers based on item validity and settings.
 
     Args:
         item: Reviewable item.
@@ -396,7 +396,7 @@ def item_menu(item: ReviewEntry, *, allow_rerun: bool) -> dict[str, str]:
 
 
 def print_summary(outcome: Choice, *, aborted: bool) -> None:
-    """Output the final decision tallies and list rejected entries.
+    """Print final decision statistics and list any rejected items to the console.
 
     Args:
         outcome: Collection of user decisions.
@@ -419,7 +419,7 @@ def render_review_panel(
     siblings: list[str],
     console_width: int,
 ) -> RenderableType:
-    """Assemble the full screen layout for one review entry.
+    """Construct the combined status line, breadcrumb header, code diff panel, and optional sidebar.
 
     Args:
         entry: Current item.
@@ -456,7 +456,7 @@ def render_review_panel(
 
 
 def build_status(*, entry: ReviewEntry, ctx: RenderCtx) -> Text:
-    """Generate the status line displaying review progress and counts.
+    """Assemble the progress header displaying decision counts and the formatted short file path.
 
     Returns:
         Formatted progress text.
@@ -476,7 +476,7 @@ def build_status(*, entry: ReviewEntry, ctx: RenderCtx) -> Text:
 
 
 def build_breadcrumb(*, entry: ReviewEntry, siblings: list[str]) -> Text:
-    """Generate header text for the item context.
+    """Assemble a breadcrumb text showing the short file path, target qualname, and file-level progress index.
 
     Returns:
         Formatted breadcrumb text.
@@ -497,7 +497,7 @@ def build_breadcrumb(*, entry: ReviewEntry, siblings: list[str]) -> Text:
 
 
 def build_parse_fail_body(entry: ReviewEntry) -> RenderableType:
-    """Create a display for entries that failed schema validation.
+    """Build a terminal block displaying a schema-validation error message and raw LLM output.
 
     Args:
         entry: Entry containing raw output.
@@ -515,7 +515,7 @@ def build_parse_fail_body(entry: ReviewEntry) -> RenderableType:
 
 
 def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Text:
-    """Render the change as a red/green diff: added lines green, context dim.
+    """Generate a colorized side-by-side or line-based diff and slice it to fit maximum lines.
 
     Args:
         preview: The unpatched and patched slices for one entry.
@@ -536,7 +536,7 @@ def build_code(*, preview: Preview, max_lines: int = MAX_CODE_LINES) -> Text:
 
 
 def build_explorer(files: list[str], *, current: str, max_lines: int | None = None) -> Tree:
-    """Create the sidebar tree for file navigation.
+    """Build a sidebar tree showing previous files as completed, the current file, and future files.
 
     Args:
         files: Ordered files list.
@@ -573,7 +573,7 @@ def build_explorer(files: list[str], *, current: str, max_lines: int | None = No
 
 
 def _explorer_row(rel: str, *, is_current: bool) -> Text:
-    """Format a single file row for the sidebar.
+    """Format a single file name row with status icons and dim styles for the sidebar.
 
     Args:
         rel: Relative path.
@@ -589,7 +589,7 @@ def _explorer_row(rel: str, *, is_current: bool) -> Text:
 
 
 def explorer_budget() -> int:
-    """Calculate allowed sidebar rows based on terminal height.
+    """Calculate the allowed height for the file explorer based on terminal dimensions and padding rules.
 
     Returns:
         Number of rows.
@@ -599,7 +599,7 @@ def explorer_budget() -> int:
 
 
 def truncate(text: str, width: int) -> str:
-    """Truncate text with a leading ellipsis.
+    """Crop long text with a leading ellipsis if it exceeds the specified maximum width.
 
     Args:
         text: Original string.
@@ -614,7 +614,7 @@ def truncate(text: str, width: int) -> str:
 
 
 def files_and_siblings(entries: list[ReviewEntry]) -> tuple[list[str], dict[str, list[str]]]:
-    """Organize entries into a list of files and mapping of items.
+    """Extract an ordered file list and group item qualnames under their respective relative paths.
 
     Returns:
         Files list and a dictionary of item names per file.
@@ -630,7 +630,7 @@ def files_and_siblings(entries: list[ReviewEntry]) -> tuple[list[str], dict[str,
 
 
 def patchable_by_file(entries: list[ReviewEntry]) -> dict[str, list[ReviewEntry]]:
-    """Group entries that carry a docstring by their file.
+    """Group successful review entries that can be patched, skipping failed parses.
 
     Args:
         entries: Review entries.
@@ -647,7 +647,7 @@ def patchable_by_file(entries: list[ReviewEntry]) -> dict[str, list[ReviewEntry]
 
 
 def build_file_previews(repo_root: Path, rel: str, group: list[ReviewEntry]) -> dict[tuple[str, str], Preview]:
-    """Generate code previews for one file's entries by patching it once.
+    """Patch a single file and slice out original and new previews for all its active entries.
 
     Args:
         repo_root: Project base directory.
@@ -675,7 +675,7 @@ def build_file_previews(repo_root: Path, rel: str, group: list[ReviewEntry]) -> 
 
 
 def patch_file(source: str, entries: list[ReviewEntry]) -> str:
-    """Insert all pending docstrings into file source code.
+    """Apply a list of docstring inserts to the file source, falling back to original code on failure.
 
     Args:
         source: File text content.
@@ -692,7 +692,7 @@ def patch_file(source: str, entries: list[ReviewEntry]) -> str:
 
 
 def extract_signature_and_docstring(patched_source: str, qualname: str) -> Preview | None:
-    """Extract a function signature and docstring from the patched source code.
+    """Extract the target function signature and docstring AST node from the source string.
 
     Args:
         patched_source: Full file source after patching.
@@ -725,7 +725,7 @@ def extract_signature_and_docstring(patched_source: str, qualname: str) -> Previ
 
 
 def module_preview(tree: ast.Module, patched_source: str) -> Preview | None:
-    """Extract the module docstring from the source tree.
+    """Extract the leading module docstring block from the parsed AST module.
 
     Returns:
         Preview object or None if no docstring is present.
@@ -739,14 +739,14 @@ def module_preview(tree: ast.Module, patched_source: str) -> Preview | None:
 
 
 def locate_function(tree: ast.AST, parts: list[str]) -> FunctionNode | None:
-    """Locate an AST node by traversing a chain of names.
+    """Find a specific function node in an AST by recursively resolving nested names.
 
     Args:
-        tree: Root module AST.
-        parts: List of qualification parts.
+        tree: Root AST node of the module to traverse.
+        parts: Ordered sequence of names representing the qualified path to the function.
 
     Returns:
-        Target function node or None.
+        The matched function or async function node, or None if not found.
     """
     current: ast.AST = tree
     for i, name in enumerate(parts):
@@ -765,10 +765,13 @@ def locate_function(tree: ast.AST, parts: list[str]) -> FunctionNode | None:
 
 
 def signature_end(func: FunctionNode) -> int:
-    """Determine the line number marking the end of a signature.
+    """Calculate the ending line number of a function signature in the AST.
+
+    Args:
+        func: The AST function node whose signature is being measured.
 
     Returns:
-        Ending line integer.
+        The ending line number of the function signature.
     """
     if func.body:
         return max(func.lineno, func.body[0].lineno - 1)
@@ -776,12 +779,12 @@ def signature_end(func: FunctionNode) -> int:
 
 
 def is_docstring(node: ast.AST) -> bool:
-    """Verify if a node is a module-level or function-level docstring expression.
+    """Check whether an AST node is a string literal containing a docstring.
 
     Args:
-        node: AST node.
+        node: The AST node to check.
 
     Returns:
-        Boolean result.
+        True if the node is a constant string expression, False otherwise.
     """
     return isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)

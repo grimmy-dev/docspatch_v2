@@ -1,4 +1,4 @@
-"""Configuration and setup for checkpoint persistence."""
+"""Asynchronous SQLite-backed checkpoint state saver setup."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager

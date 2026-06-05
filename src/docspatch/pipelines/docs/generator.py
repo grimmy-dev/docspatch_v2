@@ -1,4 +1,4 @@
-"""Provide protocols and concrete implementations for automated docstring generation using LLMs."""
+"""Declares protocols and clients for communicating with structured language model APIs to write and refine docstrings."""
 
 from typing import Protocol
 
@@ -18,14 +18,14 @@ RETRY_NOTE = "Previous draft was vague or used banned wording. Rewrite: lead wit
 
 
 def with_retry_note(item: DocstringItem, flagged: bool) -> DocstringItem:
-    """Append the style-rewrite note to a flagged item, leaving omitted ones unchanged.
+    """Add style-correction instructions to a docstring target if its previous draft failed style constraints.
 
     Args:
-        item: The item being retried.
-        flagged: Whether its prior draft tripped a style guardrail.
+        item: The docstring generation task definition.
+        flagged: True if the prior draft violated style rules.
 
     Returns:
-        The item with the rewrite note added when flagged, else the item itself.
+        A copy of the docstring item containing style-rewrite feedback.
     """
     if not flagged:
         return item
@@ -42,14 +42,14 @@ class DocstringGenerator(Protocol):
     remarks: str | None
 
     async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
-        """Return a mapping of identifiers to generated docstrings along with total token usage.
+        """Request docstrings for multiple code elements in a single structured API call.
 
         Args:
-            items: List of docstring tasks to perform.
-            tone: Style guide instructions for the output.
+            items: The target elements requiring documentation.
+            tone: Formatting style instructions.
 
         Returns:
-            Pair containing a map of IDs to text and the token consumption metrics.
+            A tuple containing a dictionary of generated docstrings and the token consumption metrics.
         """
         ...
 
@@ -63,24 +63,24 @@ class LLMDocstringGenerator:
     """
 
     def __init__(self, client: LLMClient, remarks: str | None = None) -> None:
-        """Initialize a generator instance with a provided language model client.
+        """Initialize a structured LLM docstring generator using the provided client and custom remarks.
 
         Args:
-            client: LLM client instance for generating documentation strings.
-            remarks: Optional custom instructions to guide the model behavior.
+            client: The LLM client configured for structured outputs.
+            remarks: Optional custom guidelines to modify generation behavior.
         """
         self.chain = client.with_structured_output(BatchDocstringOutput)
         self.remarks = remarks
 
     async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
-        """Generate rendered docstrings for items, retrying omitted or banned-phrase keys.
+        """Request docstrings from the LLM, automatically retrying any targets that are omitted or use banned words.
 
         Args:
-            items: The list of items requiring docstrings.
-            tone: The requested tone for the generated text.
+            items: The list of functions and classes to document.
+            tone: The requested writing tone guide.
 
         Returns:
-            A mapping of id to rendered Google-style docstring text and the total token usage.
+            A tuple containing the dictionary of successfully written docstrings and cumulative token usage.
         """
         by_key = {item.key: item for item in items}
         result, usage = await self.chain.ainvoke(build_batch_docstring_prompt(items, tone, self.remarks))

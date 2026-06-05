@@ -1,4 +1,4 @@
-"""Orchestrate the high-level docstring generation pipeline from planning to final file updates."""
+"""Establishes the main docstring generation pipeline, managing caches, checkpoints, generation, and user reviews."""
 
 import asyncio
 import time
@@ -6,13 +6,13 @@ from pathlib import Path
 
 from langchain_core.runnables import RunnableConfig
 
-from docspatch.cache import DocsCache
 from docspatch.checkpoints import make_run_id
 from docspatch.checkpoints.ledger import TokenLedger
-from docspatch.checkpoints.manifest import RunManifest, now_iso, write_manifest
+from docspatch.checkpoints.runs import RunSummary, now_iso, write_run_summary
 from docspatch.checkpoints.saver import docs_db_path, open_checkpoint_saver
 from docspatch.llm import TokenUsage, tier_info
 from docspatch.llm.pricing import actual_cost
+from docspatch.manifest import ChangeManifest
 from docspatch.pipelines.docs.context import (
     GraphContext,
     ReviewHandler,
@@ -33,15 +33,17 @@ from docspatch.utils.secrets import scrub
 
 log = get_logger("docs.pipeline")
 
+MANIFEST_PIPELINE = "docs"
 
-def scrub_for_manifest(exc: BaseException) -> str:
-    """Format an exception as a short, sensitive-data-scrubbed string suitable for inclusion in a run manifest.
+
+def scrub_for_summary(exc: BaseException) -> str:
+    """Format an exception as a safe string by stripping out API keys and sensitive project secrets.
 
     Args:
-        exc: The exception caught during pipeline execution.
+        exc: The exception instance caught during the run.
 
     Returns:
-        A sanitized string representation of the error.
+        A sanitized string representation of the exception.
     """
     return scrub(f"{type(exc).__name__}: {exc}")
 
@@ -56,16 +58,16 @@ def _render_docs_summary(
     cache_hits: int,
     scanned: int,
 ) -> None:
-    """Display the final run statistics including usage costs and performance metrics.
+    """Write a summary table to the console detailing processed files, function counts, costs, and elapsed time.
 
     Args:
-        outcome: Result of the final documentation processing step.
-        usage: Aggregated token consumption data.
-        provider: Identifier for the model provider.
-        tier: Performance or cost tier selection for the model.
-        elapsed: Total duration of the generation process in seconds.
-        cache_hits: Count of targets retrieved from the cache.
-        scanned: Total number of files evaluated during the run.
+        outcome: The final results of the documentation commit step.
+        usage: Aggregate tokens spent during generation.
+        provider: Name of the language model provider used.
+        tier: Configured pricing tier of the model.
+        elapsed: Duration of the documentation pipeline in seconds.
+        cache_hits: Number of unchanged files loaded from cache.
+        scanned: Total files inspected during planning.
     """
     model = tier_info(provider, tier).model
     if outcome.aborted:
@@ -101,7 +103,6 @@ async def run_docs(
     provider: str,
     tier: str,
     call_timeout: float = 120.0,
-    cache: DocsCache | None = None,
     prompter: Prompter | None = None,
     auto_confirm: bool = False,
     run_id: str | None = None,
@@ -109,29 +110,31 @@ async def run_docs(
     retry_display: RetryDisplay | None = None,
     review_handler: ReviewHandler | None = None,
 ) -> DocsResult:
-    """Execute the end-to-end documentation generation process.
+    """Run the end-to-end docstring pipeline: plan, generate, review, and commit.
 
     Args:
-        paths: List of file paths to process.
-        generator: Configured docstring generation engine.
-        tone: Style guideline for generated content.
-        repo_root: Filesystem path to the repository base.
-        flags: Execution settings for the current run.
-        batch_token_limit: Maximum token count for individual LLM requests.
-        concurrency_limit: Maximum number of parallel generation tasks.
-        provider: Name of the LLM provider.
-        tier: Targeted model performance tier.
-        call_timeout: Time limit for each model request in seconds.
-        cache: Persistent storage for previously generated docs.
-        prompter: Interface for handling interactive user confirmations.
-        auto_confirm: Skip user interaction when initiating the generation process.
-        run_id: Unique identifier for tracking the pipeline session.
+        paths: List of files and directories to generate docstrings for.
+        generator: The docstring generator instance executing the generation.
+        tone: Stylistic guidelines or persona for the output docstrings.
+        repo_root: Root path of the repository being analyzed.
+        flags: Control options like update overrides and remark styling.
+        batch_token_limit: Max total token count allowed in a single LLM request.
+        concurrency_limit: Maximum number of parallel network requests allowed.
+        provider: Target LLM provider API name.
+        tier: Targeted model quality tier.
+        call_timeout: Connection and response timeout for LLM calls in seconds.
+        prompter: Interface to prompt users for approval.
+        auto_confirm: Skip confirmation prompts before starting generation.
+        run_id: Unique identifier for tracking this execution session.
+        switch_handler: Handler invoked on model switches.
+        retry_display: Interface to track retry status on the progress bar.
+        review_handler: Interactive review session orchestrator.
 
     Returns:
-        Result object containing document counts and status information.
+        DocsResult summarizing execution stats, documented target counts, and any errors.
 
     Raises:
-        BaseException: Any error occurs during execution that interrupts the pipeline.
+        BaseException: An unhandled error aborts the generation process.
     """
     flags = flags or RunFlags()
     rid = run_id or make_run_id()
@@ -142,7 +145,22 @@ async def run_docs(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     ledger = TokenLedger(checkpoint_dir, rid)
 
-    manifest = RunManifest(
+    root = repo_root.resolve()
+    rel_paths = sorted(p.resolve().relative_to(root).as_posix() for p in paths)
+    manifest = ChangeManifest(repo_root)
+    # Baseline stamps drive the planner's fast-skip; recompute + commit on success.
+    prev_stamps = manifest.stamps(MANIFEST_PIPELINE)
+
+    def record_state(committed: set[str], target_files: set[str]) -> None:
+        # Record a file only when it is unchanged this run or was written. A file
+        # that had targets but went unwritten (declined or skipped) is left out, so
+        # the next run re-detects it instead of fast-skipping undocumented work.
+        keep = [p for p in rel_paths if p not in target_files or p in committed]
+        hashes, stamps = manifest.compute_state(MANIFEST_PIPELINE, root, keep)
+        manifest.commit(MANIFEST_PIPELINE, hashes, stamps)
+        log.debug("recorded docs manifest: %d/%d path(s) (committed=%d)", len(keep), len(rel_paths), len(committed))
+
+    summary = RunSummary(
         run_id=rid,
         command="docs",
         provider=provider,
@@ -155,14 +173,14 @@ async def run_docs(
             "remarks": bool(flags.remarks),
         },
     )
-    write_manifest(repo_root, manifest)
+    write_run_summary(repo_root, summary)
 
     ctx = GraphContext(
         generator=generator,
         sem=asyncio.Semaphore(concurrency_limit),
         repo_root=repo_root,
         tone=tone,
-        cache=cache,
+        prev_stamps=prev_stamps,
         provider=provider,
         tier=tier,
         prompter=prompter,
@@ -175,13 +193,13 @@ async def run_docs(
     )
 
     def finalize(status: str) -> None:
-        manifest.ended_at = now_iso()
-        manifest.exit_status = status
+        summary.ended_at = now_iso()
+        summary.exit_status = status
         usage_now = ledger.totals()
-        manifest.input_tokens = usage_now.input_tokens
-        manifest.output_tokens = usage_now.output_tokens
-        manifest.cost_total = actual_cost(provider, tier, usage_now.input_tokens, usage_now.output_tokens).total
-        write_manifest(repo_root, manifest)
+        summary.input_tokens = usage_now.input_tokens
+        summary.output_tokens = usage_now.output_tokens
+        summary.cost_total = actual_cost(provider, tier, usage_now.input_tokens, usage_now.output_tokens).total
+        write_run_summary(repo_root, summary)
 
     try:
         async with open_checkpoint_saver(db_path) as saver:
@@ -203,6 +221,7 @@ async def run_docs(
 
             if not plan_state.get("targets"):
                 await saver.adelete_thread(rid)
+                record_state(committed=set(), target_files=set())
                 finalize("success")
                 ledger.delete()
                 return DocsResult(functions_documented=0, files_documented=0, batches=0)
@@ -213,7 +232,8 @@ async def run_docs(
 
             cache_hits = plan_state.get("cache_hits", 0)
             scanned = cache_hits + len(plan_state["targets"])
-            manifest.files_scanned = scanned
+            target_files = {t.rel for t in plan_state["targets"]}
+            summary.files_scanned = scanned
             log.debug("plan: %d target(s), %d cache hit(s), resume=%s", len(plan_state["targets"]), cache_hits, is_resume)
 
             # Only generate targets without a docstring already in the checkpoint —
@@ -264,7 +284,7 @@ async def run_docs(
                     cache_hits=cache_hits,
                     scanned=scanned,
                 )
-                manifest.files_skipped = list(outcome.skipped)
+                summary.files_skipped = list(outcome.skipped)
                 finalize("aborted")
                 ledger.delete()
                 return DocsResult(functions_documented=0, files_documented=0, batches=batch_count, aborted=True)
@@ -278,11 +298,15 @@ async def run_docs(
                 cache_hits=cache_hits,
                 scanned=scanned,
             )
-            manifest.files_documented = list(outcome.committed)
-            manifest.files_skipped = list(outcome.skipped)
-            manifest.functions_documented = outcome.fn_count
+            summary.files_documented = list(outcome.committed)
+            summary.files_skipped = list(outcome.skipped)
+            summary.functions_documented = outcome.fn_count
             if outcome.error:
-                manifest.errors.append(outcome.error)
+                summary.errors.append(outcome.error)
+            else:
+                # Disk writes succeeded; persist the new baseline so the next run
+                # fast-skips them. A failed run rolls back, so it records nothing.
+                record_state(committed=set(outcome.committed), target_files=target_files)
             finalize("error" if outcome.error else "success")
             ledger.delete()
 
@@ -295,7 +319,7 @@ async def run_docs(
             error=outcome.error,
         )
     except BaseException as exc:
-        manifest.errors.append(scrub_for_manifest(exc))
-        log.debug("run_docs failed: %s", scrub_for_manifest(exc))
+        summary.errors.append(scrub_for_summary(exc))
+        log.debug("run_docs failed: %s", scrub_for_summary(exc))
         finalize("error")
         raise

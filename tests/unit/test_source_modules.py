@@ -6,7 +6,6 @@ from docspatch.source import (
     build_signature,
     compress,
     estimate_tokens,
-    extract_function_metadata,
     extract_module_docstring,
 )
 
@@ -96,15 +95,3 @@ def test_build_signature_async_with_star_args() -> None:
     node = ast.parse("async def g(*args, **kwargs): ...").body[0]
     assert isinstance(node, ast.AsyncFunctionDef)
     assert build_signature(node) == "async def g(*args, **kwargs)"
-
-
-def test_extract_function_metadata_keys_by_name() -> None:
-    src = 'def a():\n    """Doc."""\n    return 1\n\ndef b():\n    return 2\n'
-    meta = extract_function_metadata(src)
-    assert set(meta) == {"a", "b"}
-    assert meta["a"].docstring == "Doc."
-    assert meta["b"].docstring is None
-
-
-def test_extract_function_metadata_empty_on_syntax_error() -> None:
-    assert extract_function_metadata("def f(") == {}

@@ -1,23 +1,20 @@
-"""Manage the documentation generation pipeline for source code."""
+"""Run logic for parsing Python files, starting threads, and applying generated docstrings."""
 
 import asyncio
 from pathlib import Path
 
 import typer
 
-from docspatch.cache import DocsCache
-from docspatch.llm import tier_for_model
 from docspatch.pipelines.docs.flags import RunFlags, preview_check, validate_run_flags
 from docspatch.schemas import RunSettings
 from docspatch.ui import Prompter, QuestionaryPrompter, console, status
 from docspatch.ui.prompter import is_interactive
 from docspatch.ui.retry_display import RetryDisplay
-from docspatch.utils.config import default_store
 from docspatch.utils.ignore import load_docsignore
 from docspatch.utils.lockfile import run_lock
 from docspatch.utils.logging import get_logger
 from docspatch.utils.scope import discover_targets
-from docspatch.utils.selection import ensure_configured
+from docspatch.utils.session import client_for, load_session, verify_connection
 
 log = get_logger("docs")
 
@@ -35,11 +32,14 @@ RESUME_OPTION = typer.Option(False, "--resume", help="Resume the most recent int
 
 
 def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
-    """Document every undocumented function across specified paths.
+    """Generate and apply docstrings to undocumented functions in the specified paths.
 
     Args:
-        flags: Configuration flags for the run.
-        prompter: Interface for user input.
+        flags: Command line configuration options and scope targets.
+        prompter: UI interface for interactive prompts and review choices.
+
+    Raises:
+        Exit: A preview check fails or when committing the changes fails.
     """
     validate_run_flags(flags)
     repo_root = Path.cwd()
@@ -48,7 +48,6 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
         # + langgraph import cost; only a real docs run does, under this spinner.
         with status("Starting up…"):
             from docspatch.checkpoints.runs import list_incomplete_runs, pick_last_run
-            from docspatch.llm import LLMClient, validate_api_key
             from docspatch.pipelines.docs.generator import DocstringGenerator, LLMDocstringGenerator
             from docspatch.ui.review_panel import prompt_conflict, review_session
             from docspatch.utils.switcher import offer_switch
@@ -60,16 +59,15 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
             targets = discover_targets(scope, repo_root, ignore=ignore, no_ignore=flags.no_ignore)
         log.debug("resolved scope: %d target file(s)", len(targets))
 
-        store = default_store(repo_root)
         p = prompter or QuestionaryPrompter()
-        selections = ensure_configured(store, p, validate_api_key)
-        settings = RunSettings.from_config(store.read())
-        tier = tier_for_model(selections.provider, selections.generator_model)
-        log.debug("config loaded: provider=%s tier=%s", selections.provider, tier)
+        session = load_session(repo_root, p)
+        settings = RunSettings.from_config(session.store.read())
 
-        cache = DocsCache(repo_root)
         if flags.check:
-            needs_docs = preview_check(targets, repo_root, cache, selections.provider, tier)
+            from docspatch.manifest import ChangeManifest
+
+            prev_stamps = ChangeManifest(repo_root).stamps("docs")
+            needs_docs = preview_check(targets, repo_root, prev_stamps, session.provider, session.tier)
             raise typer.Exit(1 if needs_docs else 0)
 
         run_id = None
@@ -79,13 +77,9 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
         else:
             run_id = offer_resume(repo_root, p)
 
+        verify_connection(session)
         retry_display = RetryDisplay()
-        client = LLMClient(
-            provider=selections.provider,
-            api_key=selections.api_key,
-            generator_tier=tier,
-            retry_cb=retry_display,
-        )
+        client = client_for(session, retry_cb=retry_display)
         generator = LLMDocstringGenerator(client)
 
         def review_handler(payload: dict) -> dict:
@@ -100,7 +94,7 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
 
         async def handle_exhaustion(current: DocstringGenerator) -> DocstringGenerator | None:
             switched = await offer_switch(
-                store,
+                session.store,
                 p,
                 current_provider=client.provider,
                 current_model=client.generator_model,
@@ -113,15 +107,14 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
             run_with_janitor(
                 targets,
                 generator,
-                tone=selections.tone,
+                tone=session.selections.tone,
                 repo_root=repo_root,
                 flags=flags,
                 batch_token_limit=settings.batch_token_limit,
                 concurrency_limit=settings.concurrency_limit,
                 call_timeout=settings.call_timeout,
-                provider=selections.provider,
-                tier=tier,
-                cache=cache,
+                provider=session.provider,
+                tier=session.tier,
                 prompter=p,
                 run_id=run_id,
                 switch_handler=handle_exhaustion,
@@ -148,14 +141,14 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
 
 
 def offer_resume(repo_root: Path, p: Prompter) -> str | None:
-    """Detect an interrupted run and request user confirmation to resume.
+    """Resume an interrupted documentation run after user confirmation.
 
     Args:
-        repo_root: Repository path.
-        p: Prompter interface.
+        repo_root: Directory path to the local repository root.
+        p: Prompting interface to ask the user.
 
     Returns:
-        The ID of the interrupted run if resumed, or null.
+        The unique identifier of the run to resume, or None if starting fresh.
     """
     from docspatch.checkpoints.runs import discard_incomplete_runs, list_incomplete_runs
 
@@ -175,13 +168,13 @@ def offer_resume(repo_root: Path, p: Prompter) -> str | None:
 
 
 async def run_with_janitor(*args: object, repo_root: Path, **kwargs: object):
-    """Execute the periodic background cleanup sweep before starting the documentation pipeline.
+    """Run the documentation pipeline with a background janitor task clearing temporary checkpoints.
 
     Args:
-        repo_root: Repository path.
+        repo_root: Directory path of the target workspace.
 
     Returns:
-        The documentation pipeline result.
+        The pipeline run result containing stats and completion status.
     """
     from docspatch.checkpoints.janitor import start_janitor, vacuum_checkpoints
     from docspatch.pipelines.docs import run_docs

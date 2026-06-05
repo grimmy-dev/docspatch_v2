@@ -1,4 +1,4 @@
-"""Implement the core LLM client for interacting with various generation models."""
+"""Provides an abstraction layer for making model calls and validating API keys."""
 
 from typing import cast
 
@@ -19,7 +19,7 @@ __all__ = ["LLM_RETRY", "LLMClient", "RetryCallback", "is_transient", "validate_
 
 
 def validate_api_key(provider: str, api_key: str) -> bool:
-    """Verify if a provider accepts the provided API key without instantiating the full client.
+    """Dry-run a single call to verify API key validation with a fast LLM.
 
     Args:
         provider: Target provider.
@@ -41,13 +41,16 @@ class LLMClient:
         generator_tier: str = "fast",
         retry_cb: RetryCallback | None = None,
     ) -> None:
-        """Initialize the LLM client with a provider and settings.
+        """Initialize the client with active credentials, model tiers, and rate limiter.
 
         Args:
             provider: Name of the LLM provider.
             api_key: Authentication credentials.
             generator_tier: Performance tier for text generation.
             retry_cb: Callback for tracking retries.
+
+        Raises:
+            ConfigError: The provider API key is missing or blank.
         """
         self.provider: Provider = as_provider(provider)
         self.generator_tier: Tier = as_tier(generator_tier)
@@ -62,7 +65,7 @@ class LLMClient:
 
     @property
     def analysis_model(self) -> str:
-        """Return the identifier for the fast model used for analysis tasks.
+        """Retrieve the fast model identifier designated for parsing and code analysis.
 
         Returns:
             Fast tier model identifier.
@@ -71,7 +74,7 @@ class LLMClient:
 
     @property
     def generator_model(self) -> str:
-        """Return the identifier for the model used for primary generation tasks.
+        """Retrieve the primary generation model identifier based on the initialized tier.
 
         Returns:
             Generator model identifier.
@@ -79,7 +82,7 @@ class LLMClient:
         return resolve_tier_model(self.provider, self.generator_tier)
 
     def validate_key(self) -> bool:
-        """Verify the provided API key against the model provider.
+        """Invoke a minimal query to verify model access, caching successful outcomes.
 
         Returns:
             True if valid.
@@ -95,7 +98,7 @@ class LLMClient:
         return True
 
     def with_structured_output[T](self, schema: type[T]) -> TypedRunnable[T]:
-        """Configure the client to produce outputs adhering to a specific Pydantic schema.
+        """Bind a Pydantic schema to direct model outputs to parse as JSON.
 
         Args:
             schema: Pydantic model for validation.

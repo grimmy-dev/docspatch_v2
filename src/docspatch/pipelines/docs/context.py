@@ -1,4 +1,4 @@
-"""Manage the runtime context and configuration shared across the documentation generation pipeline."""
+"""Defines the shared execution context for the docstring generation pipeline and provides utilities to fetch state metadata."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -8,7 +8,6 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from docspatch.cache import DocsCache
 from docspatch.checkpoints.ledger import TokenLedger
 from docspatch.pipelines.docs.generator import DocstringGenerator
 from docspatch.pipelines.docs.planner import Target
@@ -37,7 +36,7 @@ class GraphContext:
         sem: asyncio.Semaphore,
         repo_root: Path,
         tone: str,
-        cache: DocsCache | None,
+        prev_stamps: dict[str, tuple[int, int]],
         provider: str,
         tier: str,
         prompter: Prompter | None,
@@ -48,12 +47,33 @@ class GraphContext:
         call_timeout: float,
         ledger: TokenLedger,
     ) -> None:
-        """Initialize the document generation context with configuration and dependencies."""
+        """Initialize the pipeline execution context with model settings, caches, and concurrency semaphores.
+
+        Args:
+            generator: The generator instance that orchestrates prompt creation.
+            sem: The concurrency semaphore throttling raw API requests.
+            repo_root: The absolute path to the repository directory.
+            tone: The desired docstring style description.
+            prev_stamps: The timestamp dictionary for baseline checks.
+            provider: The name of the LLM provider service.
+            tier: The rate-limit bucket designation.
+            prompter: The interactive CLI promoter helper.
+            auto_confirm: Flag to skip manual verification prompts.
+            batch_token_limit: The limit of tokens allowed per pipeline batch.
+            run_id: The unique execution session run identifier.
+            interactive: Whether the process permits active terminal interaction.
+            call_timeout: The maximum lifespan of a single model request in seconds.
+            ledger: The ledger tracking total token usage.
+        """
         self.generator = generator
         self.sem = sem
         self.repo_root = repo_root
         self.tone = tone
-        self.cache = cache
+        # Stat stamps from the last successful docs run, for planner fast-skip.
+        self.prev_stamps = prev_stamps
+        # File hashes captured at plan time, so commit can detect a file that
+        # changed on disk between planning and writing. Filled by the plan node.
+        self.plan_hashes: dict[str, str] = {}
         self.provider = provider
         self.tier = tier
         self.prompter = prompter
@@ -68,7 +88,11 @@ class GraphContext:
 
 
 async def load_metadata(saver: AsyncSqliteSaver, config: RunnableConfig) -> dict[str, Any]:
-    """Fetch checkpoint metadata for the given configuration.
+    """Fetch state metadata for a specific runnable thread configuration from the checkpointer.
+
+    Args:
+        saver: The AsyncSqliteSaver checkpoint manager.
+        config: The thread execution configuration.
 
     Returns:
         The metadata dictionary.

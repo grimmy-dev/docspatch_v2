@@ -1,4 +1,4 @@
-"""Automated cleanup for stale checkpoints and manifests."""
+"""Automatic janitorial tasks including checkpoint sweeps and database compaction."""
 
 import asyncio
 import re
@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from docspatch.checkpoints.manifest import sweep_run_manifests
+from docspatch.checkpoints.runs import sweep_run_summaries
 from docspatch.utils.config import default_store, read_toml
 
 PENDING_TTL_DAYS = 2
@@ -32,7 +32,7 @@ def sweep(checkpoint_dir: Path, now: float | None = None) -> None:
 
 
 def vacuum_checkpoints(checkpoint_dir: Path) -> None:
-    """Compress the sqlite checkpoint database.
+    """Compress the SQLite checkpoint database using VACUUM.
 
     Args:
         checkpoint_dir: Directory containing the database.
@@ -53,7 +53,7 @@ def safe_sweep(repo_root: Path) -> None:
     """
     try:
         sweep(repo_root / ".docspatch" / "checkpoints")
-        sweep_run_manifests(repo_root)
+        sweep_run_summaries(repo_root)
     except Exception as exc:  # noqa: BLE001 — janitor must never crash the command
         try:
             log = repo_root / ".docspatch" / "janitor.log"
@@ -65,10 +65,10 @@ def safe_sweep(repo_root: Path) -> None:
 
 
 def maybe_sweep(repo_root: Path) -> None:
-    """Perform periodic cleanup if the interval has elapsed.
+    """Execute a repository checkpoint sweep and update the last sweep timestamp if the configured interval has elapsed.
 
     Args:
-        repo_root: Repository base directory.
+        repo_root: Base directory of the repository containing the checkpoints configuration.
     """
     store = default_store(repo_root)
     last = int(read_toml(store.repo_path).get(LAST_SWEEP_KEY) or 0)

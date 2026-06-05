@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from docspatch.cache import DocsCache, FileDocState
 from docspatch.llm import TokenUsage
 from docspatch.pipelines.docs import run_docs
 from docspatch.pipelines.docs.flags import RunFlags
@@ -31,12 +30,28 @@ class FakeGenerator:
         return {i.key: self.canned for i in items}, FAKE_USAGE
 
 
+class DiskMutatingGenerator(FakeGenerator):
+    """Overwrites the target file during generation — after planning captured its
+    hash but before commit reads it — to provoke an on-disk conflict."""
+
+    def __init__(self, target: Path, new_text: str, docstring: str = "d.") -> None:
+        super().__init__(docstring)
+        self.target = target
+        self.new_text = new_text
+        self._mutated = False
+
+    async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
+        if not self._mutated:
+            self.target.write_text(self.new_text)
+            self._mutated = True
+        return await super().generate_batch(items, tone)
+
+
 def go(
     paths: list[Path],
     generator: DocstringGenerator,
     *,
     tmp_path: Path,
-    cache: DocsCache | None = None,
     concurrency_limit: int = 2,
     flags: RunFlags | None = None,
     run_id: str | None = None,
@@ -53,7 +68,6 @@ def go(
             concurrency_limit=concurrency_limit,
             provider="anthropic",
             tier="fast",
-            cache=cache,
             auto_confirm=True,
             run_id=run_id,
         )
@@ -223,17 +237,17 @@ def test_preserves_surrounding_code(tmp_path: Path) -> None:
     assert "return a + b" in result
 
 
-def test_writes_cache_entry_after_generation(tmp_path: Path) -> None:
+def test_records_manifest_after_generation(tmp_path: Path) -> None:
+    from docspatch.manifest import ChangeManifest
+
     src = tmp_path / "sample.py"
     src.write_text("def add(a: int, b: int) -> int:\n    return a + b\n")
-    cache = DocsCache(tmp_path)
 
-    go([src], FakeGenerator(docstring="Add a and b."), tmp_path=tmp_path, cache=cache)
+    go([src], FakeGenerator(docstring="Add a and b."), tmp_path=tmp_path)
 
-    state = cache.get("sample.py")
-    assert state is not None
-    assert "add" in state.functions
-    assert state.functions["add"].has_docstring is True
+    manifest = ChangeManifest(tmp_path)
+    assert "sample.py" in manifest.stamps("docs")
+    assert "sample.py" in (manifest.baseline("docs") or {})
 
 
 def test_undocumented_function_gains_docstring(tmp_path: Path) -> None:
@@ -331,15 +345,14 @@ def test_respects_concurrency_limit(tmp_path: Path) -> None:
     assert gen.peak <= 2
 
 
-def test_skips_cache_hits(tmp_path: Path) -> None:
+def test_unchanged_file_is_skipped_on_rerun(tmp_path: Path) -> None:
     src = tmp_path / "s.py"
     src.write_text("def a():\n    return 1\n")
-    cache = DocsCache(tmp_path)
 
-    go([src], FakeGenerator(docstring="d."), tmp_path=tmp_path, cache=cache)
+    go([src], FakeGenerator(docstring="d."), tmp_path=tmp_path)
 
     gen2 = FakeGenerator()
-    result = go([src], gen2, tmp_path=tmp_path, cache=cache)
+    result = go([src], gen2, tmp_path=tmp_path)
 
     assert gen2.calls == []
     assert result.functions_documented == 0
@@ -1003,10 +1016,8 @@ def test_commit_cleans_journal_and_snapshots_on_success(tmp_path: Path) -> None:
 def test_commit_hash_mismatch_skip_leaves_file_untouched(tmp_path: Path) -> None:
     """A file edited since planning, answered 'skip', is not written."""
     src = tmp_path / "m.py"
-    original = "def x():\n    return 1\n"
-    src.write_text(original)
-    cache = DocsCache(tmp_path)
-    cache.set("m.py", FileDocState(path="m.py", file_hash="STALE", functions={}))
+    src.write_text("def x():\n    return 1\n")
+    edited = "def x():\n    return 2\n"
 
     def handler(payload: dict) -> dict:
         if payload["type"] == "hash_mismatch":
@@ -1016,14 +1027,13 @@ def test_commit_hash_mismatch_skip_leaves_file_untouched(tmp_path: Path) -> None
     result = asyncio.run(
         run_docs(
             [src],
-            FakeGenerator(docstring="d."),
+            DiskMutatingGenerator(src, edited),
             tone="professional",
             repo_root=tmp_path,
             batch_token_limit=10_000,
             concurrency_limit=1,
             provider="anthropic",
             tier="fast",
-            cache=cache,
             auto_confirm=True,
             review_handler=handler,
         )
@@ -1031,15 +1041,14 @@ def test_commit_hash_mismatch_skip_leaves_file_untouched(tmp_path: Path) -> None
 
     assert result.functions_documented == 0
     assert result.skipped_files == 1
-    assert src.read_text() == original
+    assert src.read_text() == edited
 
 
 def test_commit_hash_mismatch_force_writes_file(tmp_path: Path) -> None:
     """Answering 'force' overwrites the concurrently-edited file."""
     src = tmp_path / "m.py"
     src.write_text("def x():\n    return 1\n")
-    cache = DocsCache(tmp_path)
-    cache.set("m.py", FileDocState(path="m.py", file_hash="STALE", functions={}))
+    edited = "def x():\n    return 2\n"
 
     def handler(payload: dict) -> dict:
         if payload["type"] == "hash_mismatch":
@@ -1049,14 +1058,13 @@ def test_commit_hash_mismatch_force_writes_file(tmp_path: Path) -> None:
     result = asyncio.run(
         run_docs(
             [src],
-            FakeGenerator(docstring="d."),
+            DiskMutatingGenerator(src, edited),
             tone="professional",
             repo_root=tmp_path,
             batch_token_limit=10_000,
             concurrency_limit=1,
             provider="anthropic",
             tier="fast",
-            cache=cache,
             auto_confirm=True,
             review_handler=handler,
         )
@@ -1064,15 +1072,14 @@ def test_commit_hash_mismatch_force_writes_file(tmp_path: Path) -> None:
 
     assert result.functions_documented == 1
     assert '"""d."""' in src.read_text()
+    assert "return 2" in src.read_text()
 
 
 def test_commit_hash_mismatch_abort_reports_error(tmp_path: Path) -> None:
     """Answering 'abort' stops the commit and reports an error."""
     src = tmp_path / "m.py"
-    original = "def x():\n    return 1\n"
-    src.write_text(original)
-    cache = DocsCache(tmp_path)
-    cache.set("m.py", FileDocState(path="m.py", file_hash="STALE", functions={}))
+    src.write_text("def x():\n    return 1\n")
+    edited = "def x():\n    return 2\n"
 
     def handler(payload: dict) -> dict:
         if payload["type"] == "hash_mismatch":
@@ -1082,14 +1089,13 @@ def test_commit_hash_mismatch_abort_reports_error(tmp_path: Path) -> None:
     result = asyncio.run(
         run_docs(
             [src],
-            FakeGenerator(docstring="d."),
+            DiskMutatingGenerator(src, edited),
             tone="professional",
             repo_root=tmp_path,
             batch_token_limit=10_000,
             concurrency_limit=1,
             provider="anthropic",
             tier="fast",
-            cache=cache,
             auto_confirm=True,
             review_handler=handler,
         )
@@ -1097,7 +1103,7 @@ def test_commit_hash_mismatch_abort_reports_error(tmp_path: Path) -> None:
 
     assert result.error is not None
     assert result.functions_documented == 0
-    assert src.read_text() == original
+    assert src.read_text() == edited
 
 
 def test_commit_rolls_back_committed_files_on_write_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1274,17 +1280,16 @@ def test_hanging_call_without_switch_raises(tmp_path: Path) -> None:
 
 
 def test_completed_run_rerun_is_zero_llm_calls(tmp_path: Path) -> None:
-    """Cache populated by a clean run → next run on the same files makes no LLM calls."""
+    """A clean run records the manifest → the next run on the same files makes no LLM calls."""
     src = tmp_path / "m.py"
     src.write_text("def foo():\n    return 1\n")
 
-    cache = DocsCache(tmp_path)
     first = FakeGenerator("done.")
-    go([src], first, tmp_path=tmp_path, cache=cache)
+    go([src], first, tmp_path=tmp_path)
     assert first.calls, "first run should have generated"
 
     second = FakeGenerator("done.")
-    go([src], second, tmp_path=tmp_path, cache=cache)
+    go([src], second, tmp_path=tmp_path)
     assert second.calls == []
 
 
@@ -1318,5 +1323,5 @@ def test_resume_twice_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     go([src], b, tmp_path=tmp_path, run_id=run_id)
 
     assert a.calls == []  # resume reused checkpoint
-    assert b.calls == []  # second resume found no incomplete run; cache covered everything
+    assert b.calls == []  # no incomplete run; file already documented on disk
     assert src.read_text() == after_first_resume

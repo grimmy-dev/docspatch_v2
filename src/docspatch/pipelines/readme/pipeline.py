@@ -1,4 +1,4 @@
-"""README pipeline: freshness gate, agent context resolution, generation, review."""
+"""Scans repository files, builds code context, prompts for review, and writes the updated README."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from docspatch.llm import TokenUsage
-from docspatch.manifest import ChangeManifest, ChangeSet, semantic_hash
+from docspatch.manifest import ChangeManifest, ChangeSet
 from docspatch.pipelines.readme.generator import ReadmeGenerator
 from docspatch.pipelines.readme.prompts import TOOL_DEFS
 from docspatch.pipelines.readme.state import PreContext, ReadmeResult, ReadmeState
@@ -45,21 +45,14 @@ class ScopeState:
 
 
 def scope_state(repo_root: Path, scope: str) -> ScopeState:
-    """Hash the scoped Python files and diff them against the README baseline.
-
-    A file whose size and mtime match the stored stamp reuses its baseline hash,
-    so only changed files pay the libcst compression cost. The first run hashes
-    everything; later runs skip the unchanged majority.
+    """Hash scoped files and diff them against the manifest baseline to compute changes.
 
     Args:
-        repo_root: The repository root.
-        scope: The repo-relative directory the README covers.
+        repo_root: The base directory of the repository.
+        scope: The targeted subdirectory path within the repository.
 
     Returns:
-        The scoped paths, their semantic hashes and stamps, and the change set.
-
-    Raises:
-        PathError: The scope holds no Python files (fail fast).
+        A ScopeState instance containing scanned paths, hashes, and changed sets.
     """
     root = repo_root.resolve()
     arg = Path("." if scope in _ROOT_SCOPES else scope)
@@ -67,46 +60,33 @@ def scope_state(repo_root: Path, scope: str) -> ScopeState:
     paths = sorted(p.relative_to(root).as_posix() for p in found)
 
     manifest = ChangeManifest(root)
-    prev_hashes = manifest.baseline(MANIFEST_PIPELINE) or {}
-    prev_stamps = manifest.stamps(MANIFEST_PIPELINE)
-    hashes: dict[str, str] = {}
-    stamps: dict[str, tuple[int, int]] = {}
-    for p in paths:
-        st = (root / p).stat()
-        stamp = (st.st_size, st.st_mtime_ns)
-        cached = prev_hashes.get(p)
-        hashes[p] = cached if cached is not None and prev_stamps.get(p) == stamp else semantic_hash((root / p).read_text(encoding="utf-8"))
-        stamps[p] = stamp
-
+    hashes, stamps = manifest.compute_state(MANIFEST_PIPELINE, root, paths)
     return ScopeState(paths=paths, hashes=hashes, stamps=stamps, change_set=manifest.diff(MANIFEST_PIPELINE, hashes))
 
 
 def is_fresh(scope: ScopeState, out_path: Path) -> bool:
-    """Report whether the README is present and nothing scoped changed.
+    """Check if the README file exists and matches the unmodified repository scope.
 
     Args:
-        scope: The scoped hashes and change set.
-        out_path: The README path.
+        scope: The state of scoped file hashes and change history.
+        out_path: The output file path of the README.
 
     Returns:
-        True when the README exists and the change set is empty.
+        True if the README exists and matches current file states.
     """
     return out_path.exists() and scope.change_set.empty
 
 
 def build_pre_context(repo_root: Path, scope: str, state: ScopeState) -> PreContext:
-    """Build the backbone the analysis passes travel with.
-
-    Project facts, dependencies, and entry points apply at root scope only; a
-    subpackage README stays at its own altitude.
+    """Assemble project metadata, dependencies, and command entry points into a PreContext backbone.
 
     Args:
-        repo_root: The repository root.
-        scope: The repo-relative directory the README covers.
-        state: The scoped paths and change set, for the tagged tree.
+        repo_root: The root directory of the repository.
+        scope: The relative folder scope of the README.
+        state: The scanned file states and change manifests.
 
     Returns:
-        The assembled backbone.
+        The constructed pre-context metadata model.
     """
     is_root = scope in _ROOT_SCOPES
     return PreContext(
@@ -121,15 +101,15 @@ def build_pre_context(repo_root: Path, scope: str, state: ScopeState) -> PreCont
 
 
 def _tagged_tree(repo_root: Path, scope: str, state: ScopeState) -> str:
-    """Render the scoped files as a change-tagged path list, removed paths included.
+    """Format scoped file listings as a directory tree tagged with modification markers.
 
     Args:
-        repo_root: The repository root.
-        scope: The repo-relative directory the README covers.
-        state: The scoped paths and change set.
+        repo_root: The directory root of the project.
+        scope: The relative path scope of the README.
+        state: The current file changes and tracked paths.
 
     Returns:
-        One repo-relative path per line, each tagged ``[new]``/``[updated]``/``[removed]``.
+        A string listing directory trees with file-by-file annotations.
     """
     tag = {**dict.fromkeys(state.change_set.added, "[new]"), **dict.fromkeys(state.change_set.updated, "[updated]")}
     is_root = scope in _ROOT_SCOPES
@@ -140,10 +120,14 @@ def _tagged_tree(repo_root: Path, scope: str, state: ScopeState) -> str:
 
 
 def _initial_state(pre: PreContext, existing: str | None) -> ReadmeState:
-    """Seed graph state for a run.
+    """Build the starting state model for the context-resolution graph.
+
+    Args:
+        pre: The pre-context information block.
+        existing: The content of the existing README if present.
 
     Returns:
-        The starting state with empty model and context channels.
+        The initial ReadmeState mapping dictionary.
     """
     return {
         "phase": "triage",
@@ -176,21 +160,21 @@ async def generate_readme(
     provider: str,
     tier: str,
 ) -> ReadmeResult:
-    """Resolve context with the agent graph, draft the README, review, and write on accept.
+    """Generate the codebase context, draft the README, and prompt the user to approve changes.
 
     Args:
-        repo_root: The repository root.
-        scope: The repo-relative directory the README covers.
-        out_path: Destination README path.
-        analysis_client: Fast-tier client driving triage and drill.
-        generator: The README generator.
-        prompter: Interface for user input.
-        remarks: Optional run-wide instruction folded into every draft.
-        provider: LLM provider, for the cost panel.
-        tier: Generator tier, for the cost panel.
+        repo_root: The root directory of the local repository.
+        scope: The directory scope to analyze and write for.
+        out_path: The destination file path for the README.
+        analysis_client: The fast-tier model client.
+        generator: The README builder client.
+        prompter: The interaction terminal prompt receiver.
+        remarks: Additional contextual instructions from the user.
+        provider: The name of the LLM provider.
+        tier: The generator model speed/size tier.
 
     Returns:
-        The run outcome, including whether the file was written.
+        The pipeline outcome showing write status and token use.
     """
     from docspatch.pipelines.readme.graph import build_readme_graph
 
@@ -206,10 +190,12 @@ async def generate_readme(
     pre = build_pre_context(root, scope, state)
     log.debug("pre-context: %d scoped file(s), %d changed", len(state.paths), len(state.change_set.changed))
 
+    log.debug("resolving context for %d scoped file(s)", len(state.paths))
     with console.status("Reading the codebase…", spinner="dots") as live:
         graph = build_readme_graph(root, analysis_client, progress=lambda m: live.update(f"[cyan]{m}[/cyan]"))
         resolved = await graph.ainvoke(_initial_state(pre, existing))
     woven, ctx_usage = resolved["woven"], resolved["usage"]
+    log.debug("context resolved: %d surface(s), %d body(ies)", len(resolved.get("surfaces", {})), len(resolved.get("bodies", {})))
 
     async def regenerate(feedback: tuple[str, ...]) -> tuple[str, TokenUsage]:
         return await generator.generate(pre=pre, woven=woven, existing_readme=existing, feedback=_fold(remarks, feedback))
@@ -221,6 +207,7 @@ async def generate_readme(
     if result.accepted and result.markdown is not None:
         atomic_write(out_path, result.markdown.rstrip("\n") + "\n")
         ChangeManifest(root).commit(MANIFEST_PIPELINE, state.hashes, state.stamps)
+        log.debug("recorded readme manifest: %d path(s)", len(state.hashes))
         console.print(f"[green]✓[/green] Wrote {out_path}")
     else:
         console.print("[dim]README discarded — nothing written.[/dim]")
@@ -234,14 +221,14 @@ async def generate_readme(
 
 
 def _fold(remarks: str | None, feedback: tuple[str, ...]) -> str | None:
-    """Combine the run-wide remark and accumulated revise notes into one block.
+    """Combine starting instructions and iterative review suggestions into a single feedback block.
 
     Args:
-        remarks: Optional run-wide instruction.
-        feedback: Accumulated revise notes, oldest first.
+        remarks: Top-level instructions provided at CLI invocation.
+        feedback: A sequence of review remarks collected during evaluation.
 
     Returns:
-        The joined instruction block, or null when there is nothing to add.
+        The combined feedback string, or null if empty.
     """
     parts = ([remarks] if remarks else []) + [f"- {note}" for note in feedback]
     return "\n".join(parts) if parts else None

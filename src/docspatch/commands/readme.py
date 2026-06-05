@@ -1,4 +1,4 @@
-"""Generate a path-scoped README through the agent context pipeline."""
+"""CLI commands and support utilities for generating, updating, or validating README files."""
 
 import asyncio
 from dataclasses import dataclass
@@ -6,15 +6,13 @@ from pathlib import Path
 
 import typer
 
-from docspatch.llm import tier_for_model
 from docspatch.ui import Prompter, QuestionaryPrompter, console, status
 from docspatch.ui.prompter import is_interactive
-from docspatch.utils.config import default_store
 from docspatch.utils.errors import ConfigError, ReadmeError
 from docspatch.utils.lockfile import run_lock
 from docspatch.utils.logging import get_logger
 from docspatch.utils.scope import ensure_exists, ensure_inside_repo, ensure_relative
-from docspatch.utils.selection import ensure_configured
+from docspatch.utils.session import client_for, load_session, verify_connection
 
 log = get_logger("readme")
 
@@ -45,10 +43,10 @@ class ReadmeFlags:
 
 
 def validate_flags(flags: ReadmeFlags) -> None:
-    """Reject mutually exclusive flag combinations.
+    """Validate that command line flags for checking, updating, and prompting do not conflict.
 
     Args:
-        flags: The resolved run inputs.
+        flags: Readme options to check for exclusive settings.
 
     Raises:
         ConfigError: Two conflicting flags are active together.
@@ -60,17 +58,16 @@ def validate_flags(flags: ReadmeFlags) -> None:
 
 
 def resolve_target(path: Path | None, repo_root: Path) -> tuple[str, Path]:
-    """Map the path argument to a directory scope and a README output location.
+    """Resolve the repository scope and absolute README destination path.
 
     Args:
-        path: The directory argument, or null for the repo root.
+        path: The directory path argument, or null for the repo root.
         repo_root: The repository root.
 
     Returns:
         The repo-relative scope and the README path to write.
 
     Raises:
-        PathError: The path is absolute, missing, or outside the repo.
         ReadmeError: The path points at a file rather than a directory.
     """
     root = repo_root.resolve()
@@ -86,7 +83,7 @@ def resolve_target(path: Path | None, repo_root: Path) -> tuple[str, Path]:
 
 
 def run_check(repo_root: Path, scope: str, out_path: Path) -> bool:
-    """Report README freshness from the change manifest, no model calls.
+    """Compare the repository change state with the target README to determine if it is fresh.
 
     Args:
         repo_root: The repository root.
@@ -94,7 +91,7 @@ def run_check(repo_root: Path, scope: str, out_path: Path) -> bool:
         out_path: The README path.
 
     Returns:
-        True when the README is fresh (up to date).
+        True if the README is up to date.
     """
     from docspatch.pipelines.readme.pipeline import is_fresh, scope_state
 
@@ -113,10 +110,7 @@ def run_check(repo_root: Path, scope: str, out_path: Path) -> bool:
 
 
 def _with_update(flags: ReadmeFlags) -> str | None:
-    """Fold the ``--update`` flag into the run remark as a restructure instruction.
-
-    The pipeline always treats the existing README as the baseline and voice
-    reference; ``--update`` simply licenses free restructuring on top of that.
+    """Add a restructuring instruction to the generation remarks when updating the README.
 
     Args:
         flags: The resolved run inputs.
@@ -134,7 +128,7 @@ def _with_update(flags: ReadmeFlags) -> str | None:
 
 
 def run(flags: ReadmeFlags, prompter: Prompter | None = None) -> None:
-    """Generate or check a README for the requested scope.
+    """Run the README generation or verification sequence for the requested scope.
 
     Args:
         flags: Resolved run inputs.
@@ -154,38 +148,27 @@ def run(flags: ReadmeFlags, prompter: Prompter | None = None) -> None:
 
     # Deferred so a bare `dp`/`--help`/`--check` never pays the provider-SDK cost.
     with status("Starting up…"):
-        from docspatch.llm import LLMClient, validate_api_key
         from docspatch.pipelines.readme.generator import LLMReadmeGenerator
         from docspatch.pipelines.readme.pipeline import generate_readme
 
     remarks = _with_update(flags)
-    store = default_store(repo_root)
-    selections = ensure_configured(store, p, validate_api_key)
-    tier = tier_for_model(selections.provider, selections.generator_model)
-    log.debug("config loaded: provider=%s tier=%s", selections.provider, tier)
+    session = load_session(repo_root, p)
 
     with run_lock(repo_root):
-        with status(f"Connecting to {selections.provider}…"):
-            analysis_client = LLMClient(provider=selections.provider, api_key=selections.api_key, generator_tier="fast")
-            gen_client = LLMClient(provider=selections.provider, api_key=selections.api_key, generator_tier=tier)
-            connected = analysis_client.validate_key()
-        if not connected:
-            console.print(f"[red]✗[/red] Could not connect to {selections.provider}. Check your API key with `dp init --reconfigure`.")
-            raise typer.Exit(1)
-        console.print(f"[green]✓[/green] Connected to {selections.provider}.")
-        generator = LLMReadmeGenerator(gen_client)
+        verify_connection(session)
+        generator = LLMReadmeGenerator(client_for(session))
         log.debug("starting readme generation")
         result = asyncio.run(
             generate_readme(
                 repo_root,
                 scope,
                 out_path,
-                analysis_client=analysis_client,
+                analysis_client=client_for(session, "fast"),
                 generator=generator,
                 prompter=p,
                 remarks=remarks,
-                provider=selections.provider,
-                tier=tier,
+                provider=session.provider,
+                tier=session.tier,
             )
         )
     log.debug("readme finished: written=%s", result.written)

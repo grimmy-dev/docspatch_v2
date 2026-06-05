@@ -1,4 +1,4 @@
-"""Prompt assembly for the three README LLM passes: triage, drill, and generation."""
+"""Formats prompt templates and context variables to guide LLM-based README generation."""
 
 from docspatch.pipelines.readme.state import PreContext, Surface
 
@@ -46,25 +46,25 @@ _GROUND_RULES = (
 
 
 def scope_label(scope: str) -> str:
-    """Describe the README's target in prose for a prompt header.
+    """Formulate a user-friendly label describing the package or project scope.
 
     Args:
-        scope: Target scope directory.
+        scope: The relative target path of the README generation.
 
     Returns:
-        A phrase naming the whole project or a specific package.
+        A descriptive phrase naming the targeted project or package.
     """
     return "the whole project" if scope in {".", "", "./"} else f"the `{scope}` package"
 
 
 def render_facts(pre: PreContext) -> str:
-    """Render authoritative project facts and dependencies, or empty for a subpackage.
+    """Format metadata and dependencies into an authoritative facts block.
 
     Args:
-        pre: The run backbone.
+        pre: The baseline pipeline context containing project metadata.
 
     Returns:
-        A labelled facts block, or an empty string when no facts apply.
+        A formatted authoritative text block of project facts.
     """
     if pre.facts is None:
         return ""
@@ -78,25 +78,25 @@ def render_facts(pre: PreContext) -> str:
 
 
 def render_backbone(pre: PreContext) -> str:
-    """Render the facts and change-tagged directory tree shared by every pass.
+    """Format the repository layout tree and metadata block for prompts.
 
     Args:
-        pre: The run backbone.
+        pre: The baseline pipeline context containing the tagged tree.
 
     Returns:
-        The facts plus tagged directory layout.
+        A formatted directory layout with change tags.
     """
     return f"{render_facts(pre)}Directory layout (tags mark files changed since the last README):\n{pre.tagged_tree}\n\n"
 
 
 def render_surface(surface: Surface) -> str:
-    """Render one file's public surface as a prompt block.
+    """Format a file's public surface into a markdown block of signatures and docstrings.
 
     Args:
-        surface: The file surface from Tool 2.
+        surface: The public class and function definitions of a file.
 
     Returns:
-        The path header, module docstring, and each public entry.
+        A markdown representation of the file's API surface.
     """
     lines = [f"### {surface.path}"]
     if surface.module_doc:
@@ -110,13 +110,13 @@ def render_surface(surface: Surface) -> str:
 
 
 def render_surfaces(surfaces: list[Surface]) -> str:
-    """Join several file surfaces into one prompt section.
+    """Combine multiple formatted file surfaces into a single prompt block.
 
     Args:
-        surfaces: The surfaces to render, in the order they should appear.
+        surfaces: The list of public file surfaces to combine.
 
     Returns:
-        The concatenated surface blocks.
+        The combined markdown block for all surfaces.
     """
     return "\n\n".join(render_surface(s) for s in surfaces)
 
@@ -125,13 +125,13 @@ def render_surfaces(surfaces: list[Surface]) -> str:
 
 
 def build_triage_prompt(pre: PreContext) -> str:
-    """Build the triage prompt: pick the files worth surfacing for this scope.
+    """Compile the triage prompt instructing the LLM to select source files for analysis.
 
     Args:
-        pre: The run backbone (tagged tree, facts, tool menu).
+        pre: The baseline pipeline context containing project facts.
 
     Returns:
-        The complete triage prompt.
+        The triage stage prompt string for the LLM.
     """
     return (
         f"You are scoping a README for {scope_label(pre.scope)}. Select every source file whose "
@@ -147,15 +147,15 @@ def build_triage_prompt(pre: PreContext) -> str:
 
 
 def build_drill_prompt(pre: PreContext, rendered_surfaces: str, error: str | None = None) -> str:
-    """Build the drill prompt: request needed bodies and synthesize an orientation.
+    """Compile the drill prompt instructing the LLM to request code implementations and summarize project architecture.
 
     Args:
-        pre: The run backbone.
-        rendered_surfaces: The selected files' surfaces, already rendered.
-        error: A prior bad-plan error to correct, or null on the first attempt.
+        pre: The baseline pipeline context.
+        rendered_surfaces: Markdown containing the public signatures of selected files.
+        error: A validation error message from a prior drill attempt.
 
     Returns:
-        The complete drill prompt.
+        The drill stage prompt instructing the LLM to request details.
     """
     retry = (
         f"\nYour previous plan was rejected: {error}\nRequest only paths and function names that "
@@ -185,20 +185,16 @@ def build_drill_prompt(pre: PreContext, rendered_surfaces: str, error: str | Non
 
 
 def build_generator_prompt(scope: str, woven: str, existing_readme: str | None, feedback: str | None) -> str:
-    """Build the generator prompt from the woven context and the existing README.
-
-    The existing README is framed as baseline, tone, and user preference: match
-    its voice and structure, keep hand-written sections, refresh facts from the
-    woven context. A fresh run has none and picks a default voice.
+    """Compile the final generator prompt combining project context and the existing README baseline.
 
     Args:
-        scope: The repo-relative scope.
-        woven: The assembled context (backbone, synthesis, surfaces, bodies).
-        existing_readme: The current README, or null for a first write.
-        feedback: Accumulated revise feedback, or null.
+        scope: The path scope of the package.
+        woven: The assembled facts, surfaces, and implementation bodies.
+        existing_readme: The text of any pre-existing README to preserve.
+        feedback: Quality feedback instructions to apply.
 
     Returns:
-        The complete generator prompt.
+        The final prompt guiding the LLM to generate the README.
     """
     existing = (
         "Existing README — this is the baseline, the tone reference, and the user's preference. "

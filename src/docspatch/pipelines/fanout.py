@@ -1,5 +1,4 @@
-"""Support distributed parallel execution via graph state.
-This module defines primitives for routing tasks and managing fan-out workflow life cycles."""
+"""Executes parallel workflows using LangGraph to process structured batches."""
 
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
@@ -26,14 +25,14 @@ SwitchFn = Callable[[], Awaitable[bool]]
 
 
 def make_router(node_name: str, payload_fn: PayloadFn) -> Callable[[dict[str, Any]], list[Send] | str]:
-    """Build a routing function for conditional node invocation.
+    """Construct a routing function that fans out uncompleted batches to a target node via Send operations.
 
     Args:
-        node_name: Name of the target processing node.
-        payload_fn: Callable to construct node input from state.
+        node_name: Name of the target state graph node to receive the sends.
+        payload_fn: Callable that constructs the payload for a single batch from the overall state.
 
     Returns:
-        Routing logic for the state graph.
+        A routing function that takes the current state and returns a list of Send commands or END.
     """
 
     def route(state: dict[str, Any]) -> list[Send] | str:
@@ -51,16 +50,17 @@ def build_fanout_graph(
     payload_fn: PayloadFn,
     saver: AsyncSqliteSaver,
 ) -> Any:  # noqa: ANN401 — langgraph's compiled graph type is not publicly nameable
-    """Compile a state graph for parallel batch processing.
+    """Compile a state graph configured to process batches in parallel with checkpoints.
 
     Args:
-        node_name: Target processing node identifier.
-        node: Async function for processing batches.
-        payload_fn: Logic to prepare batch data.
-        saver: Checkpointer for persisting execution state.
+        state_type: The typed dictionary or class defining the graph state schema.
+        node_name: The processing node identifier.
+        node: The async callable representing the processing action.
+        payload_fn: The logic that maps state data to parallel batch payloads.
+        saver: The SQLite checkpoint manager used to persist state.
 
     Returns:
-        Compiled graph instance.
+        The compiled runnable graph.
     """
     g: StateGraph = StateGraph(state_type)
     g.add_node(node_name, node)
@@ -70,14 +70,14 @@ def build_fanout_graph(
 
 
 async def load_state(saver: AsyncSqliteSaver, config: RunnableConfig) -> dict[str, Any]:
-    """Fetch the last committed state from a checkpointer.
+    """Fetch the most recent state checkpoint dictionary from the state checkpointer.
 
     Args:
-        saver: Async checkpointer instance.
-        config: Runnable configuration including thread identifier.
+        saver: The SQLite checkpointer holding execution records.
+        config: The runnable configuration containing the target thread identifier.
 
     Returns:
-        Current state dictionary.
+        The state channel values at the latest checkpoint, or empty.
     """
     snap = await saver.aget_tuple(config)
     if snap is None or snap.checkpoint is None:
@@ -95,15 +95,23 @@ async def run_fanout[B: HasId](
     label: str,
     on_wave: Callable[[int, dict[str, Any], Sequence[B]], None] | None = None,
 ) -> dict[str, Any]:
-    """Execute batches in waves until completion or exhaustion.
+    """Execute batched tasks in waves, returning final states or swapping resources upon exhaustion.
 
     Args:
-        graph: The compiled state graph.
-        pending: Sequenced batches awaiting processing.
-        switch: Handler for swapping exhausted resources.
+        graph: The compiled parallel state graph to execute.
+        saver: The persistent checkpointer saving wave progress.
+        config: The execution context mapping thread history.
+        initial: The initial state inputs to load into the first graph invocation.
+        pending: A sequence of unresolved batch items needing execution.
+        switch: An async trigger to substitute exhausted API keys or backends.
+        label: The descriptive label of the process for error reporting.
+        on_wave: An optional callback triggered after completing a cycle of parallel nodes.
 
     Returns:
-        The final aggregate state.
+        The consolidated final execution state.
+
+    Raises:
+        TransientExhausted: All processing attempts fail and no switch callback is provided or successful.
     """
     state = dict(initial)
     wave = 0

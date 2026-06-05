@@ -1,1 +1,1 @@
-"""Expose the pipeline modules and orchestrators for document processing."""
+"""Exposes the pipeline packages and execution entry points."""

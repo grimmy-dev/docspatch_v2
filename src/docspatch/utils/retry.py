@@ -1,4 +1,4 @@
-"""Implement request retries, backoff policies, and rate limit gating."""
+"""Retries operations using exponential backoff policies and rate limit gates."""
 
 import asyncio
 import time
@@ -20,13 +20,13 @@ class RetryPolicy:
     max_delay: float = float("inf")
 
     def delay_for(self, attempt: int) -> float:
-        """Calculate the backoff delay for a specific attempt.
+        """Compute an exponential backoff delay based on the failure attempt index.
 
         Args:
-            attempt: The current attempt index.
+            attempt: Index of the current failure attempt.
 
         Returns:
-            The calculated delay in seconds.
+            Delay duration in seconds.
         """
         return min(self.base_delay * (2**attempt), self.max_delay)
 
@@ -45,11 +45,11 @@ class RateLimitGate:
     """
 
     def __init__(self, policy: RetryPolicy, on_retry: OnRetry | None = None) -> None:
-        """Initialize the rate limit gate with a policy.
+        """Initialize the rate limit gate using a retry policy and callback.
 
         Args:
-            policy: Retry logic configuration.
-            on_retry: Optional callback to invoke during retry delays.
+            policy: Retry policy defining delay durations.
+            on_retry: Optional callback function triggered when retrying.
         """
         self.policy = policy
         self.on_retry = on_retry
@@ -58,17 +58,17 @@ class RateLimitGate:
         self.unblock_at = 0.0
 
     async def execute[T](self, fn: Callable[[], Awaitable[T]], is_retriable: IsRetriable) -> T:
-        """Run fn under the gate and coordinate retries across siblings.
+        """Execute an asynchronous function, retrying on matched exceptions using exponential backoff.
 
         Args:
-            fn: The asynchronous action to perform.
-            is_retriable: Predicate to determine if an exception warrants a retry.
+            fn: Asynchronous callable to evaluate.
+            is_retriable: Predicate to evaluate if an exception qualifies for retry.
 
         Returns:
-            The function result.
+            Value returned by the executed function.
 
         Raises:
-            TransientExhausted: The retry budget is exceeded.
+            TransientExhausted: The maximum retry attempts defined by the policy are reached.
         """
         last_exc: Exception | None = None
         while True:
@@ -95,7 +95,7 @@ class RateLimitGate:
                         self.unblock_at = time.monotonic() + self.policy.delay_for(self.attempt - 1)
 
     async def wait_if_blocked(self) -> None:
-        """Block until unblock_at passes, ticking on_retry once per second."""
+        """Pause execution while the rate limit gate remains blocked by a retry window."""
         while True:
             remaining = self.unblock_at - time.monotonic()
             if remaining <= 0:

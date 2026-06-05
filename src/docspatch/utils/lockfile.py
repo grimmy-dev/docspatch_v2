@@ -1,4 +1,4 @@
-"""Manage file-based locks to prevent concurrent process operations."""
+"""Uses file-based locks to prevent concurrent execution of docspatch runs."""
 
 import json
 import os
@@ -13,10 +13,10 @@ from docspatch.utils.errors import LockError
 
 @contextmanager
 def run_lock(repo_root: Path) -> Iterator[None]:
-    """Hold a repository-level lock for the lifetime of a block.
+    """Acquire a filesystem lock during the nested context block.
 
     Args:
-        repo_root: The base repository directory.
+        repo_root: Root directory of the repository where the lock will be placed.
     """
     # Cancellation contract: lock is released on any normal exit, exception, or
     # KeyboardInterrupt (finally block). Only SIGKILL can leave a stale lock,
@@ -31,10 +31,10 @@ def run_lock(repo_root: Path) -> Iterator[None]:
 
 
 def _acquire(lock: Path) -> None:
-    """Create a lock file, clearing any stale ones found during the attempt.
+    """Create a run lock file containing the current process ID and timestamp.
 
     Args:
-        lock: The path of the lock file to create.
+        lock: Path of the lock file to write.
     """
     payload = json.dumps({"pid": os.getpid(), "started": time.time()}).encode()
     for _ in range(2):
@@ -52,13 +52,13 @@ def _acquire(lock: Path) -> None:
 
 
 def _clear_or_fail(lock: Path) -> None:
-    """Remove a stale lock file or raise an error if the owner process is still active.
+    """Delete a stale lock file or raise a LockError if the owner process is still active.
 
     Args:
-        lock: The lock file path.
+        lock: Path to the active lock file.
 
     Raises:
-        LockError: A process is actively holding the lock.
+        LockError: The lock file is held by an active process.
     """
     try:
         data = json.loads(lock.read_text())
@@ -74,13 +74,13 @@ def _clear_or_fail(lock: Path) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
-    """Determine if a process is still running.
+    """Test whether a given process ID is running.
 
     Args:
-        pid: Process ID to probe.
+        pid: Operating system process identifier.
 
     Returns:
-        True if the process is active.
+        True if the process is active or permissions prevent checking.
     """
     try:
         os.kill(pid, 0)

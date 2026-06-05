@@ -1,4 +1,4 @@
-"""Manage and scrub API keys and sensitive configuration values."""
+"""Scrubs and masks sensitive API keys in plaintext to prevent exposure."""
 
 import re
 
@@ -15,35 +15,35 @@ keys whose shape ``_API_KEY_RE`` would miss."""
 
 
 def register_secret(value: object) -> None:
-    """Register an active API key so scrub masks it even if the regex misses it.
+    """Save a key to the list of active secrets for exact-match scrubbing.
 
     Args:
-        value: The key string to register.
+        value: Secret string to register.
     """
     if value and isinstance(value, str) and len(value) >= _MIN_REGISTERED_LEN:
         _active_keys.add(value)
 
 
 def is_secret_key(key: str) -> bool:
-    """Return True for config keys whose value must never appear unmasked.
+    """Identify configuration keys that contain sensitive values based on their name.
 
     Args:
-        key: The configuration key name.
+        key: Configuration key name.
 
     Returns:
-        Boolean indicating if the key is sensitive.
+        True if the key name identifies a secret.
     """
     return key.startswith("api_key")
 
 
 def mask_api_key(value: object) -> str:
-    """Mask all but the first 4 characters of an API key; return '—' for empty input.
+    """Mask an API key, retaining only its first four characters.
 
     Args:
-        value: The key to mask.
+        value: Plaintext key string to mask.
 
     Returns:
-        The masked key string.
+        Masked key string, or a dash if empty.
     """
     if not value:
         return "—"
@@ -52,13 +52,13 @@ def mask_api_key(value: object) -> str:
 
 
 def scrub(text: str) -> str:
-    """Mask API keys in free text using regex and exact registered key matches.
+    """Scan text to replace occurrences of API keys with their masked equivalents.
 
     Args:
-        text: The input text containing potential keys.
+        text: Source text to scrub.
 
     Returns:
-        Text with sensitive values masked.
+        Text with all identified API keys replaced.
     """
     masked = _API_KEY_RE.sub(lambda m: m.group(0)[:4] + _MASK, text)
     for key in _active_keys:
@@ -68,14 +68,14 @@ def scrub(text: str) -> str:
 
 
 def display_value(key: str, value: object) -> str:
-    """Render a config value for display, masking when key is secret.
+    """Render a configuration value, masking it if the key corresponds to a secret.
 
     Args:
-        key: The configuration key.
-        value: The value to render.
+        key: Configuration key name.
+        value: Value to format.
 
     Returns:
-        The displayed value string.
+        Formatted configuration value.
     """
     if is_secret_key(key):
         return mask_api_key(value)

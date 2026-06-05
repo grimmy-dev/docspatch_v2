@@ -1,16 +1,16 @@
-"""Convert structured documentation specs into rendered text strings. This module ensures consistency and proper Google-style formatting."""
+"""Formatter functions to serialize raw docstring components into standard Python styles."""
 
 from docspatch.schemas import DocstringSpec
 
 
 def render_google_docstring(spec: DocstringSpec) -> str:
-    """Assemble a structured specification into a final Google-style docstring.
+    """Format structured docstring specifications into Google-style documentation blocks.
 
     Args:
-        spec: Parsed docstring components.
+        spec: Structured description, argument, return, and raise schemas.
 
     Returns:
-        The complete docstring text.
+        A single formatted docstring block.
     """
     summary = _period(spec.description)
     sections: list[str] = []
@@ -34,13 +34,13 @@ def render_google_docstring(spec: DocstringSpec) -> str:
 
 
 def _period(text: str) -> str:
-    """Ensure a string ends with a period.
+    """Append a period to a string if it lacks terminal punctuation.
 
     Args:
-        text: String to validate.
+        text: Text to finalize.
 
     Returns:
-        String with appropriate terminal punctuation.
+        Cleaned text ending with a period, exclamation point, or question mark.
     """
     trimmed = text.strip()
     if trimmed and trimmed[-1] not in ".!?":

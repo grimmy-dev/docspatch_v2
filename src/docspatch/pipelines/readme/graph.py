@@ -1,9 +1,4 @@
-"""LangGraph context-resolution subgraph: triage, surface, drill, body-fetch, weave.
-
-The analysis model decides what context it needs (triage, drill); code fetches
-exactly that (surfaces, bodies) and weaves it. The only loop is the bad-plan
-retry from bodies back to drill.
-"""
+"""Compiles and executes LangGraph steps to scan codebases, parse surfaces, and extract implementation details."""
 
 import asyncio
 from collections.abc import Callable
@@ -30,12 +25,12 @@ def build_readme_graph(
     analysis_client: LLMClient,
     progress: Callable[[str], None] | None = None,
 ) -> Any:  # noqa: ANN401 — compiled langgraph is not nameable
-    """Compile the context-resolution subgraph bound to a repo and analysis model.
+    """Build the context-resolution state graph bound to a repository and analysis model.
 
     Args:
-        repo_root: The repository root (a ``Path``).
+        repo_root: The local folder path of the repository.
         analysis_client: The fast-tier client driving triage and drill.
-        progress: Optional callback each node calls with a one-line status.
+        progress: An optional callback reporting structural checkpoint messages.
 
     Returns:
         The compiled, in-memory graph.
@@ -111,19 +106,27 @@ def build_readme_graph(
 
 
 def _route_after_bodies(state: ReadmeState) -> str:
-    """Route back to drill on a retryable bad plan, else on to weave.
+    """Determine the next execution node based on whether code body extraction requires retries.
+
+    Args:
+        state: The current execution state tracking retries and phase markers.
 
     Returns:
-        ``"drill"`` while a bad plan still has retries left, otherwise ``"weave"``.
+        The identifier of the next graph node to invoke.
     """
     return "drill" if state["phase"] == "drill" else "weave"
 
 
 def _in_surface(surfaces: dict[str, Surface], path: str, function_name: str) -> bool:
-    """Report whether a body request names a path and function present in the surfaces.
+    """Evaluate whether a function name is declared within parsed module surfaces.
+
+    Args:
+        surfaces: The parsed structure dictionary of repository files.
+        path: The target module file path.
+        function_name: The target function to seek within the module.
 
     Returns:
-        True when the path was surfaced and exposes an entry of that name.
+        True if the function is found in the specified parsed file surface.
     """
     surface = surfaces.get(path)
     return surface is not None and any(e.name == function_name for e in surface.entries)

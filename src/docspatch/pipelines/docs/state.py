@@ -1,5 +1,4 @@
-"""Define state management types for the documentation pipeline.
-This module maintains progress and configuration throughout the generation process."""
+"""Contains data models and merge helpers for tracking document generation and review states."""
 
 from operator import add
 from pathlib import Path
@@ -66,23 +65,23 @@ class GeneratedDoc(BaseModel):
 
     @property
     def key(self) -> GenKey:
-        """Generate the unique identifier for the generated content.
+        """Compute the unique composite key representing the file path and qualified name.
 
         Returns:
-            Tuple of file path and qualified function name.
+            A composite key pair of file path and qualified name.
         """
         return (self.rel, self.qualname)
 
 
 def merge_feedback(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Combine feedback dictionaries.
+    """Combine two review feedback dictionaries by merging lists of comments under matching keys.
 
     Args:
-        a: Base feedback.
-        b: New feedback to merge.
+        a: The base feedback dictionary mapping keys to lists of remarks.
+        b: The secondary feedback dictionary to merge into the base.
 
     Returns:
-        Unified feedback dictionary.
+        A new unified feedback dictionary containing combined critique lists.
     """
     out = {k: list(v) for k, v in a.items()}
     for k, v in b.items():
@@ -91,14 +90,14 @@ def merge_feedback(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str
 
 
 def merge_generated(a: list[GeneratedDoc], b: list[GeneratedDoc]) -> list[GeneratedDoc]:
-    """Merge documentation results, prioritizing newer values for duplicate keys.
+    """Merge lists of generated document models, resolving key duplicates in favor of the newer ones.
 
     Args:
-        a: Existing documentation results.
-        b: Incoming documentation results.
+        a: The baseline sequence of generated documentation results.
+        b: The incoming sequence of generated documentation results to overlay.
 
     Returns:
-        List of merged unique documents.
+        The unified list of unique generated documents.
     """
     by_key: dict[GenKey, GeneratedDoc] = {}
     for entry in (*a, *b):

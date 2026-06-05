@@ -1,10 +1,10 @@
-"""End-to-end: run_docs leaves a manifest with real counts + tokens."""
+"""End-to-end: run_docs leaves a run summary with real counts + tokens."""
 
 import asyncio
 import json
 from pathlib import Path
 
-from docspatch.checkpoints.manifest import manifest_path
+from docspatch.checkpoints.runs import run_summary_path
 from docspatch.llm import TokenUsage
 from docspatch.pipelines.docs import run_docs
 from docspatch.pipelines.docs.prompts import DocstringItem
@@ -22,7 +22,7 @@ class FakeGenerator:
         return {i.key: self.canned for i in items}, FAKE_USAGE
 
 
-def test_successful_run_persists_manifest_with_counts(tmp_path: Path) -> None:
+def test_successful_run_persists_summary_with_counts(tmp_path: Path) -> None:
     src = tmp_path / "m.py"
     src.write_text("def foo():\n    return 1\n")
     run_id = "20260523-000001-aaaaaa"
@@ -42,7 +42,7 @@ def test_successful_run_persists_manifest_with_counts(tmp_path: Path) -> None:
         )
     )
 
-    path = manifest_path(tmp_path, run_id)
+    path = run_summary_path(tmp_path, run_id)
     assert path.exists()
     data = json.loads(path.read_text())
     assert data["exit_status"] == "success"

@@ -1,4 +1,4 @@
-"""Command-line interface entry point."""
+"""Main Typer-based command-line interface and invocation routers."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -67,6 +67,7 @@ def init_cmd(reconfigure: bool = RECONFIGURE_OPTION, debug: bool = DEBUG_OPTION)
 
     Args:
         reconfigure: Force prompts for existing settings.
+        debug: Enable verbose tracing.
     """
     invoke_command(lambda: init.run(reconfigure=reconfigure), debug, "init")
 
@@ -89,6 +90,8 @@ def docs_cmd(
         update: Overwrite existing docs.
         remarks: Optional user context for doc generation.
         resume: Continue from the last aborted run.
+        no_ignore: Skip .gitignore + .docsignore filtering.
+        debug: Enable verbose tracing.
     """
     flags = docs.RunFlags(
         paths=tuple(paths or ()),
@@ -114,8 +117,9 @@ def readme_cmd(
     Args:
         path: Directory to scope the README to; repo root when omitted.
         update: Allow free restructuring instead of refreshing in place.
-        check: Report staleness without writing or calling a model.
+        check: Report staleness without writing.
         remarks: Extra instruction added to the generation prompt.
+        debug: Enable verbose tracing.
     """
     flags = readme.ReadmeFlags(path=path, update=update, check=check, remarks=remarks)
     invoke_command(lambda: readme.run(flags), debug, "readme")
@@ -123,7 +127,11 @@ def readme_cmd(
 
 @app.command("cleanup")
 def cleanup_cmd(debug: bool = DEBUG_OPTION) -> None:
-    """Clean up internal metadata and cache files."""
+    """Clean up internal metadata and cache files.
+
+    Args:
+        debug: Enable verbose tracing.
+    """
     invoke_command(cleanup.run, debug, "cleanup")
 
 
@@ -133,6 +141,7 @@ def config_cb(ctx: typer.Context, debug: bool = DEBUG_OPTION) -> None:
 
     Args:
         ctx: Context for the command.
+        debug: Enable verbose tracing.
     """
     if ctx.invoked_subcommand is None:
         invoke_command(config.run, debug, "config")
@@ -145,5 +154,6 @@ def config_set(key: str, value: str, debug: bool = DEBUG_OPTION) -> None:
     Args:
         key: Setting key to change.
         value: New value to assign.
+        debug: Enable verbose tracing.
     """
     invoke_command(lambda: config.run_set(key, value), debug, "config set")

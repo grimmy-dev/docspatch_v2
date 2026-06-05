@@ -1,4 +1,4 @@
-"""Define data schemas and configuration models for the application."""
+"""Contains validated settings schemas and type mappings for configuring LLM clients."""
 
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast, get_args
@@ -20,16 +20,16 @@ Tier = Literal["fast", "balanced", "best"]
 
 
 def as_provider(value: str) -> Provider:
-    """Convert a string to a recognized LLM provider literal.
+    """Validate and cast a string to a recognized LLM provider literal.
 
     Args:
-        value: The raw provider string.
+        value: The raw provider identifier string.
 
     Returns:
-        The validated provider literal.
+        The cast provider literal.
 
     Raises:
-        ConfigError: The value does not match any known provider.
+        ConfigError: The provider name is unrecognized.
     """
     if value not in get_args(Provider):
         raise ConfigError.unknown_provider(value)
@@ -37,16 +37,16 @@ def as_provider(value: str) -> Provider:
 
 
 def as_tier(value: str) -> Tier:
-    """Convert a string to a recognized model tier literal.
+    """Validate and cast a string to a recognized model performance tier.
 
     Args:
         value: The raw tier string.
 
     Returns:
-        The validated tier literal.
+        The cast tier literal.
 
     Raises:
-        ConfigError: The value does not match any known tier.
+        ConfigError: The tier name is unrecognized.
     """
     if value not in get_args(Tier):
         raise ConfigError.unknown_tier(value)
@@ -67,13 +67,13 @@ class ScopedValue[T]:
 
 
 def _default(key: str) -> ScopedValue[Any]:
-    """Get the default value for a configuration key.
+    """Resolve the default configuration value from global settings.
 
     Args:
-        key: The configuration key to look up.
+        key: The configuration key to query.
 
     Returns:
-        A ScopedValue containing the default configuration.
+        A scoped value containing the default value.
     """
     return ScopedValue(CONFIG_DEFAULTS[key], "default")
 
@@ -105,13 +105,13 @@ class RunSettings:
 
     @classmethod
     def from_config(cls, config: DocspatchConfig) -> RunSettings:
-        """Initialize settings from the application configuration.
+        """Construct run settings from a config object, applying environment-specific fallbacks.
 
         Args:
-            config: The raw configuration object.
+            config: The loaded application configuration.
 
         Returns:
-            An instance of RunSettings with defaults applied.
+            A structured settings object initialized with resolved run options.
         """
         return cls(
             batch_token_limit=int(config.batch_token_limit.value or DEFAULT_BATCH_TOKEN_LIMIT),
@@ -131,15 +131,6 @@ class FunctionMetadata:
     llm_summary: str | None = None
     line_start: int = 0
     line_end: int = 0
-
-
-@dataclass
-class FunctionDocState:
-    """Hash + presence flag for a single function."""
-
-    hash: str
-    has_docstring: bool
-    line_start: int = 0
 
 
 # ---- LLM structured-output schemas -----------------------------------------

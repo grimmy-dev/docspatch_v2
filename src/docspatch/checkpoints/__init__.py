@@ -1,4 +1,4 @@
-"""Checkpoint persistence utilities."""
+"""Run checkpoint identifiers and management utility routines."""
 
 import secrets
 from datetime import UTC, datetime

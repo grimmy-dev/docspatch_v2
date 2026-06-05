@@ -1,8 +1,4 @@
-"""Token-usage accounting.
-
-Deliberately free of langchain/provider imports so the cost panel and other
-light consumers can use ``TokenUsage`` without paying the SDK import cost.
-"""
+"""Contains the TokenUsage dataclass to track and combine input and output token counts."""
 
 from __future__ import annotations
 
@@ -18,7 +14,7 @@ class TokenUsage:
 
     @property
     def total(self) -> int:
-        """Aggregate the total count of input and output tokens.
+        """Calculate the sum of input and output tokens.
 
         Returns:
             Sum of tokens.
@@ -26,7 +22,7 @@ class TokenUsage:
         return self.input_tokens + self.output_tokens
 
     def __add__(self, other: TokenUsage) -> TokenUsage:
-        """Sum two token usage instances.
+        """Add the token counts of another usage instance to create a new combined total.
 
         Args:
             other: Another usage instance.

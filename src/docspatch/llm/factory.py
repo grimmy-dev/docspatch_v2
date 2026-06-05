@@ -1,4 +1,4 @@
-"""Manage dynamic instantiation of LLM model providers."""
+"""Contains mapping and setup code to construct LangChain chat model classes."""
 
 import importlib
 from collections.abc import Callable
@@ -15,7 +15,7 @@ KwargsMapper = Callable[[str, str, int | None], dict[str, Any]]
 
 
 def _standard_kwargs(model_key: str) -> KwargsMapper:
-    """Create a mapper for providers using standard argument naming conventions.
+    """Generate constructor argument mappers for typical LangChain providers.
 
     Args:
         model_key: Key identifier for the model argument.
@@ -34,7 +34,12 @@ def _standard_kwargs(model_key: str) -> KwargsMapper:
 
 
 def _gemini_kwargs(model: str, api_key: str, max_tokens: int | None) -> dict[str, Any]:
-    """Transform parameters to match the Gemini provider expectation.
+    """Map parameters to Google-specific constructor arguments for Gemini.
+
+    Args:
+        model: Model target name.
+        api_key: API credential key.
+        max_tokens: Token length constraint.
 
     Returns:
         Dictionary of provider-specific keywords.
@@ -62,28 +67,26 @@ PROVIDERS: dict[Provider, ProviderSpec] = {
 
 
 def load_provider_class(spec: ProviderSpec) -> type[BaseChatModel]:
-    """Dynamically load and return the chat model class specified in the provider definition.
+    """Import and retrieve the chat model class dynamically from its provider module.
 
     Args:
         spec: Provider specification.
 
     Returns:
         Chat model class.
-
-    Raises:
-        ImportError: Dependencies are missing.
     """
     module = importlib.import_module(spec.module)
     return cast(type[BaseChatModel], getattr(module, spec.class_name))
 
 
 def build_llm(provider: str, api_key: str, tier: str, max_tokens: int | None = None) -> BaseChatModel:
-    """Instantiate a chat model for a given provider and tier.
+    """Resolve model specifications and construct the ChatModel class.
 
     Args:
         provider: Target provider.
         api_key: Authentication key.
         tier: Performance tier.
+        max_tokens: Maximum token threshold.
 
     Returns:
         Configured chat model instance.
@@ -96,7 +99,11 @@ def build_llm(provider: str, api_key: str, tier: str, max_tokens: int | None = N
 
 
 def build_validator_llm(provider: str, api_key: str) -> BaseChatModel:
-    """Create a lightweight client instance for rapid key validation.
+    """Build a lightweight, token-limited model client for rapid authentication checks.
+
+    Args:
+        provider: Target provider.
+        api_key: Access credential key.
 
     Returns:
         Fast chat model instance.

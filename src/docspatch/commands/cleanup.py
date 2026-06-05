@@ -1,11 +1,10 @@
-"""Interactive removal of internal data artifacts."""
+"""User command to interactive clear files, caches, and database folders."""
 
 import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from docspatch.cache import DocsCache
 from docspatch.manifest import MANIFEST_NAME
 from docspatch.ui import Prompter, QuestionaryPrompter, console, status
 from docspatch.utils.logging import get_logger
@@ -36,27 +35,12 @@ def cleanup_items(repo_root: Path) -> list[CleanupItem]:
     repo_cfg = docspatch_dir / "config.toml"
     global_dir = home / ".docspatch"
     return [
-        CleanupItem(f"Caches{_cache_hint(repo_root)}", cache_root),
+        CleanupItem(f"Caches{_path_hint(cache_root)}", cache_root),
         CleanupItem(f"Checkpoints{_path_hint(checkpoints)}", checkpoints),
         CleanupItem(f"Change manifest{_path_hint(manifest)}", manifest),
         CleanupItem(f"Repo config{_path_hint(repo_cfg)}", repo_cfg),
         CleanupItem(f"Global docspatch data (~/.docspatch){_path_hint(global_dir)}", global_dir),
     ]
-
-
-def _cache_hint(repo_root: Path) -> str:
-    """Generate a size and file count description for cache directories.
-
-    Args:
-        repo_root: Path to the repository root.
-
-    Returns:
-        Formatted string with file count and size, or empty string.
-    """
-    docs = DocsCache(repo_root).info()
-    if docs.file_count == 0:
-        return ""
-    return f" ({docs.file_count} files, {_human_bytes(docs.total_size_bytes)})"
 
 
 def _path_hint(path: Path) -> str:
@@ -113,11 +97,11 @@ def _human_bytes(n: int) -> str:
 
 
 def run(prompter: Prompter | None = None, repo_root: Path | None = None) -> None:
-    """Perform an interactive cleanup operation to remove local configuration or temporary data.
+    """Delete user-selected repository artifacts and empty configuration directories after interactive confirmation.
 
     Args:
-        prompter: Interface for handling user input.
-        repo_root: Root path of the repository.
+        prompter: Interactive prompt interface used to gather user confirmation and selections.
+        repo_root: Base directory to scan for temporary artifacts, defaulting to the current working directory.
     """
     p = prompter or QuestionaryPrompter()
     root = repo_root or Path.cwd()

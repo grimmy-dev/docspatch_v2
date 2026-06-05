@@ -1,1 +1,1 @@
-"""Initialize shared utilities for batching and process management."""
+"""Utility package initializer for configuration, file operations, process locking, and git interaction."""

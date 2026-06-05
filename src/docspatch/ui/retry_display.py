@@ -1,4 +1,4 @@
-"""Handle rate limit notifications and user retry feedback."""
+"""RetryDisplay: format rate-limit retry/backoff notices to a sink."""
 
 from collections.abc import Callable
 
@@ -9,11 +9,11 @@ class RetryDisplay:
     """Per-run retry callback. Pipelines bind a bar sink while active."""
 
     def __init__(self) -> None:
-        """Initialize the display handler."""
+        """Set up an empty output callback sink."""
         self.sink: Callable[[str], None] | None = None
 
     def bind(self, sink: Callable[[str], None]) -> None:
-        """Send subsequent retry notices to the specified sink.
+        """Assign a callback sink to receive retry messages instead of printing to stdout.
 
         Args:
             sink: Output handler for notifications.
@@ -21,11 +21,11 @@ class RetryDisplay:
         self.sink = sink
 
     def unbind(self) -> None:
-        """Revert to printing to stdout."""
+        """Clear the assigned callback sink to resume printing messages directly to stdout."""
         self.sink = None
 
     def __call__(self, attempt: int, remaining: float) -> None:
-        """Display the rate limit retry information to the user.
+        """Format and output the current backoff attempt and remaining delay to the configured sink or stdout.
 
         Args:
             attempt: Current retry count.
