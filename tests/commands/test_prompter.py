@@ -1,12 +1,10 @@
 """Prompter seam — ScriptedPrompter contract + headless init smoke test."""
 
 import tomllib
-from unittest.mock import MagicMock
 
 import pytest
 
 import docspatch.commands.init as init_cmd
-from docspatch.pipelines.scout.state import ScanPlan
 from docspatch.ui import Prompter, QuestionaryPrompter, ScriptedPrompter
 
 
@@ -43,17 +41,9 @@ def test_scripted_prompter_dict_choices_select_returns_label_value():
 
 def test_init_runs_end_to_end_with_scripted_prompter(monkeypatch, tmp_path):
     """Headless dp init: no questionary patching, just a scripted answer queue."""
-    # Stub out the LLM and cache-scan side effects.
-    mock_client = MagicMock()
-    mock_client.validate_key.return_value = True
-    monkeypatch.setattr("docspatch.pipelines.scout.pipeline.LLMClient", MagicMock(return_value=mock_client))
-    monkeypatch.setattr("docspatch.commands.init.validate_api_key", lambda _p, _k: True)
-    monkeypatch.setattr(
-        "docspatch.pipelines.scout.pipeline.plan_uncached",
-        lambda *a, **kw: ScanPlan(uncached=(), cached=(), token_estimate=0),
-    )
+    monkeypatch.setattr("docspatch.llm.client.validate_api_key", lambda _p, _k: True)
 
-    answers = ["anthropic", "sk-ant-key", "balanced", "professional", "MIT", False]
+    answers = ["anthropic", "sk-ant-key", "balanced", "professional", "MIT"]
     init_cmd.run(
         repo_root=tmp_path,
         global_config_path=tmp_path / "global.toml",

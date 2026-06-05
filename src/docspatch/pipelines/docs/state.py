@@ -1,9 +1,4 @@
-"""Shared state types for the docs pipeline graphs.
-
-The plan, generate and finalize graphs each have their own ``TypedDict`` state;
-the Pydantic models below are the values that travel inside that state and so
-must round-trip cleanly through the checkpointer's serializer.
-"""
+"""Contains data models and merge helpers for tracking document generation and review states."""
 
 from operator import add
 from pathlib import Path
@@ -70,16 +65,24 @@ class GeneratedDoc(BaseModel):
 
     @property
     def key(self) -> GenKey:
-        """Retrieve the composite identifier for the document.
+        """Compute the unique composite key representing the file path and qualified name.
 
         Returns:
-            A key tuple containing the relative file path and the qualified name.
+            A composite key pair of file path and qualified name.
         """
         return (self.rel, self.qualname)
 
 
 def merge_feedback(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Reducer: concatenate feedback notes per key, oldest first."""
+    """Combine two review feedback dictionaries by merging lists of comments under matching keys.
+
+    Args:
+        a: The base feedback dictionary mapping keys to lists of remarks.
+        b: The secondary feedback dictionary to merge into the base.
+
+    Returns:
+        A new unified feedback dictionary containing combined critique lists.
+    """
     out = {k: list(v) for k, v in a.items()}
     for k, v in b.items():
         out.setdefault(k, []).extend(v)
@@ -87,7 +90,15 @@ def merge_feedback(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str
 
 
 def merge_generated(a: list[GeneratedDoc], b: list[GeneratedDoc]) -> list[GeneratedDoc]:
-    """Reducer: latest-wins merge by ``(rel, qualname)``."""
+    """Merge lists of generated document models, resolving key duplicates in favor of the newer ones.
+
+    Args:
+        a: The baseline sequence of generated documentation results.
+        b: The incoming sequence of generated documentation results to overlay.
+
+    Returns:
+        The unified list of unique generated documents.
+    """
     by_key: dict[GenKey, GeneratedDoc] = {}
     for entry in (*a, *b):
         by_key[entry.key] = entry
@@ -115,6 +126,13 @@ class GenerateState(TypedDict, total=False):
     completed_batches: Annotated[list[int], add]
     generated: Annotated[list[GeneratedDoc], merge_generated]
     feedback: Annotated[dict[str, list[str]], merge_feedback]
+
+
+class RegenerateInput(TypedDict):
+    """Send payload for the regenerate node: one batch plus its rerun feedback."""
+
+    batch: BatchRef
+    feedback: dict[str, list[str]]
 
 
 class ReviewState(TypedDict, total=False):

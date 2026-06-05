@@ -1,8 +1,4 @@
-"""Shared end-of-run summary panel for the docs and scout pipelines.
-
-Each pipeline assembles its own rows and title; this module owns the panel
-layout, the real-token cost rows, the cache-hit row, and the unresolved list.
-"""
+"""Functions to print execution metrics, cache hit ratios, and API costs to the terminal console."""
 
 from collections.abc import Iterable
 
@@ -13,10 +9,16 @@ from docspatch.ui.panels import kv_panel
 
 
 def cost_rows(usage: TokenUsage, provider: str, tier: str, *, sunk: bool = False) -> list[tuple[str, str]]:
-    """Real-token rows for the summary panel.
+    """Calculate LLM usage costs to generate structured metric rows for summary panels.
 
-    ``sunk`` flags an aborted run, where the tokens were billed but produced no
-    written docstring — the label says so.
+    Args:
+        usage: Total tokens consumed during the run.
+        provider: Name of the LLM provider.
+        tier: Selected model tier determining the rates.
+        sunk: Mark token costs as sunk when an execution is aborted.
+
+    Returns:
+        A list of label and value string pairs displaying token consumption and financial cost.
     """
     cost = actual_cost(provider, tier, usage.input_tokens, usage.output_tokens)
     label = "Tokens (sunk cost)" if sunk else "Tokens in / out"
@@ -27,7 +29,15 @@ def cost_rows(usage: TokenUsage, provider: str, tier: str, *, sunk: bool = False
 
 
 def cache_hit_row(hits: int, total: int) -> tuple[str, str]:
-    """Cache-hit ratio row — ``hits`` of ``total`` functions skipped via cache."""
+    """Format cache hit statistics into a key-value row for the console summary.
+
+    Args:
+        hits: Number of cache-restored generation requests.
+        total: Total number of generation requests executed.
+
+    Returns:
+        A key-value pair of strings detailing cache hits and ratio.
+    """
     pct = f" ({hits * 100 // total}%)" if total else ""
     return ("Cache hits", f"{hits}/{total}{pct}")
 
@@ -39,7 +49,14 @@ def render_summary(
     unresolved: Iterable[str] = (),
     border_style: str = "green",
 ) -> None:
-    """Print the summary panel, followed by the unresolved file list when non-empty."""
+    """Print a structured key-value summary panel along with outstanding unresolved paths.
+
+    Args:
+        title: Header label for the summary panel.
+        rows: List of key-value data rows to render.
+        unresolved: File paths that were left without final decisions.
+        border_style: Styling theme applied to the outer panel boundaries.
+    """
     console.print(kv_panel(title, rows, border_style=border_style))
     pending = sorted(unresolved)
     if pending:

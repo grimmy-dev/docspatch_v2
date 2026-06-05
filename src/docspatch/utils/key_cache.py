@@ -1,17 +1,4 @@
-"""Cross-process API key validation cache.
-
-A key is validated by the provider via :meth:`LLMClient.validate_key`. That
-call costs a network round-trip; doing it on every ``dp`` invocation is
-wasteful. This cache stores ``sha256(api_key) + validated_at`` per provider
-so subsequent invocations within the TTL skip the round-trip.
-
-Auto-invalidation:
-- TTL: 10 minutes since the last successful validation.
-- Hash mismatch: if the user changes ``api_key_<provider>`` (via
-  ``dp config set`` or by editing the file), the new key's hash will not
-  match the cached one — :func:`is_validated` returns False without us
-  needing to wipe the entry explicitly.
-"""
+"""Caches validated API keys in a local JSON file to avoid redundant verification calls."""
 
 import hashlib
 import json
@@ -28,17 +15,35 @@ class _Entry(TypedDict):
 
 
 def default_path() -> Path:
-    """Return the default path for storing API key validations."""
+    """Return the standard local filesystem path for the API key validation JSON file.
+
+    Returns:
+        Path to the validation cache file.
+    """
     return Path.home() / ".docspatch" / ".key_validation.json"
 
 
 def _hash(api_key: str) -> str:
-    """Generate a SHA256 hash for an API key."""
+    """Compute the SHA-256 hex digest of an API key string.
+
+    Args:
+        api_key: Plaintext API key to hash.
+
+    Returns:
+        Hexadecimal representation of the hashed key.
+    """
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
 def _load(path: Path) -> dict[str, _Entry]:
-    """Load cached validation entries from a file."""
+    """Load and parse cached validation records from a JSON file.
+
+    Args:
+        path: Path to the validation JSON file.
+
+    Returns:
+        Dictionary of cache entries mapped by provider.
+    """
     try:
         raw = json.loads(path.read_text())
     except OSError, json.JSONDecodeError:
@@ -47,13 +52,28 @@ def _load(path: Path) -> dict[str, _Entry]:
 
 
 def _save(path: Path, data: dict[str, _Entry]) -> None:
-    """Save validation entries to a persistent cache file."""
+    """Save API key validation records to a persistent JSON file.
+
+    Args:
+        path: Location to write the JSON file.
+        data: Dictionary of cache records to save.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
 
 
 def is_validated(provider: str, api_key: str, *, path: Path | None = None, now: float | None = None) -> bool:
-    """True iff ``api_key`` for ``provider`` was validated within the TTL."""
+    """Check if a cached API key hash exists and is within its time-to-live threshold.
+
+    Args:
+        provider: Name of the service provider.
+        api_key: Plaintext API key to check.
+        path: Custom cache file path, or null to use the default path.
+        now: Override timestamp for testing, or null to use current epoch time.
+
+    Returns:
+        True if the cached key matches and has not expired.
+    """
     entry = _load(path or default_path()).get(provider)
     if entry is None:
         return False
@@ -65,7 +85,14 @@ def is_validated(provider: str, api_key: str, *, path: Path | None = None, now: 
 
 
 def mark_validated(provider: str, api_key: str, *, path: Path | None = None, now: float | None = None) -> None:
-    """Record that ``api_key`` for ``provider`` just passed validation."""
+    """Write a validated API key hash and timestamp record to the cache file.
+
+    Args:
+        provider: Name of the service provider.
+        api_key: Plaintext API key that was validated.
+        path: Custom cache file path, or null to use the default path.
+        now: Override timestamp for testing, or null to use current epoch time.
+    """
     p = path or default_path()
     data = _load(p)
     current = now if now is not None else time.time()

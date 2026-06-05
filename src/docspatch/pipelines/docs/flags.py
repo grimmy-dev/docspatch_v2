@@ -1,9 +1,4 @@
-"""Run-level flags for ``dp docs``: data shape, mutex validation, behaviours.
-
-Covers one invocation's flags end to end — the ``RunFlags`` data, conflict
-validation, ``--remarks`` resolution across a resume, and the ``--check``
-preview.
-"""
+"""Defines options for the docstring pipeline and implements validation, feedback resolution, and plan preview calculations."""
 
 from __future__ import annotations
 
@@ -11,10 +6,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from docspatch.cache import DocsCache
 from docspatch.llm import tier_info
-from docspatch.llm.pricing import estimate_cost
-from docspatch.pipelines.docs.planner import Target, collect_targets
+from docspatch.llm.pricing import DOCS_OUTPUT_RATIO, estimate_cost
 from docspatch.ui import build_table, console, kv_panel
 from docspatch.ui.prompter import Prompter
 from docspatch.utils.errors import ConfigError
@@ -47,7 +40,14 @@ _CONFLICTS = (
 
 
 def validate_run_flags(flags: RunFlags) -> None:
-    """Reject conflicting flag combinations with an actionable error."""
+    """Raise a ConfigError if incompatible command-line flags are requested together.
+
+    Args:
+        flags: The parsed command-line runtime options.
+
+    Raises:
+        ConfigError: Mutually exclusive options like check and update are active simultaneously.
+    """
     active = {
         "check": flags.check,
         "update": flags.update,
@@ -63,14 +63,17 @@ def validate_run_flags(flags: RunFlags) -> None:
 # ---- --remarks resolution --------------------------------------------------
 
 
-def resolve_remarks(
-    *, is_resume: bool, prior: str | None, requested: str | None, prompter: Prompter | None
-) -> str | None:
-    """Return the remarks to use for this run.
+def resolve_remarks(*, is_resume: bool, prior: str | None, requested: str | None, prompter: Prompter | None) -> str | None:
+    """Select the appropriate instructions to guide docstring generation when resuming an interrupted run.
 
-    A fresh run uses ``requested``. A resumed run keeps ``prior`` unless a
-    different ``--remarks`` was passed, which overrides after the user confirms
-    (non-interactive runs take the new value without prompting).
+    Args:
+        is_resume: True if resuming a previous run.
+        prior: The instructions used during the original run.
+        requested: The instructions requested for the current run.
+        prompter: User interface prompter to prompt for resolution.
+
+    Returns:
+        The chosen instructions string, or None if no instructions are used.
     """
     if not is_resume:
         return requested
@@ -93,15 +96,24 @@ def resolve_remarks(
 # ---- --check preview -------------------------------------------------------
 
 
-def preview_check(
-    files: list[Path], repo_root: Path, cache: DocsCache, provider: str, tier: str
-) -> bool:
-    """Render the ``--check`` preview. Returns True when any function needs docs.
+def preview_check(files: list[Path], repo_root: Path, prev_stamps: dict[str, tuple[int, int]], provider: str, tier: str) -> bool:
+    """Analyze undocumented Python targets and print a preview of expected changes, token usage, and costs.
 
-    Writes nothing — the caller maps the result to an exit code so the command
-    works as a pre-commit or post-commit hook.
+    Args:
+        files: Paths to Python source files to check.
+        repo_root: The base directory of the repository.
+        prev_stamps: Stored file modification timestamps used to find changes.
+        provider: The name of the LLM provider.
+        tier: The performance and cost tier of the model.
+
+    Returns:
+        True if any targets require documentation, False otherwise.
     """
-    found = collect_targets(files, repo_root, cache=cache).targets
+    # Deferred: planner pulls libcst via the source module — keep `flags` light
+    # so importing it for RunFlags/validation never pays that cost.
+    from docspatch.pipelines.docs.planner import Target, collect_targets
+
+    found = collect_targets(files, repo_root, prev_stamps).targets
     if not found:
         console.print("[green]✓[/green] All Python files documented.")
         return False
@@ -115,7 +127,7 @@ def preview_check(
     total_cost = 0.0
     for rel in sorted(by_file):
         items = by_file[rel]
-        est = estimate_cost(provider, tier, sum(t.token_cost for t in items), output_ratio=0.6)
+        est = estimate_cost(provider, tier, sum(t.token_cost for t in items), output_ratio=DOCS_OUTPUT_RATIO)
         rows.append([rel, str(len(items)), f"~{est.input_tokens:,}", f"${est.total:.4f}"])
         total_fns += len(items)
         total_tokens += est.input_tokens
@@ -124,8 +136,6 @@ def preview_check(
 
     console.print(f"[bold]{tier_info(provider, tier).model}[/bold] · {tier} tier")
     console.print(build_table(["FILE", "UNDOCUMENTED", "INPUT TOKENS", "COST"], rows))
-    console.print(
-        f"[yellow]{total_fns} function(s) across {len(by_file)} file(s) need docstrings.[/yellow]"
-    )
+    console.print(f"[yellow]{total_fns} function(s) across {len(by_file)} file(s) need docstrings.[/yellow]")
     console.print("[dim]Run [/dim]dp docs[dim] to document them.[/dim]")
     return True

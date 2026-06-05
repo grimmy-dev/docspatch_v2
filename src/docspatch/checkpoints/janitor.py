@@ -1,4 +1,4 @@
-"""Sweep stale checkpoint artifacts: legacy spill files. Once-per-day."""
+"""Automatic janitorial tasks including checkpoint sweeps and database compaction."""
 
 import asyncio
 import re
@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from docspatch.checkpoints.manifest import sweep_run_manifests
+from docspatch.checkpoints.runs import sweep_run_summaries
 from docspatch.utils.config import default_store, read_toml
 
 PENDING_TTL_DAYS = 2
@@ -17,7 +17,12 @@ PENDING_RE = re.compile(r"^pending-(?P<run_id>\d{8}-\d{6}-[a-f0-9]{6})\.json\.gz
 
 
 def sweep(checkpoint_dir: Path, now: float | None = None) -> None:
-    """Delete legacy ``pending-*.json.gz`` files older than TTL."""
+    """Delete pending checkpoint files exceeding the retention time.
+
+    Args:
+        checkpoint_dir: Target checkpoint directory.
+        now: Current timestamp; defaults to time.time().
+    """
     if not checkpoint_dir.exists():
         return
     cutoff = (now or time.time()) - PENDING_TTL_DAYS * 86400
@@ -27,7 +32,11 @@ def sweep(checkpoint_dir: Path, now: float | None = None) -> None:
 
 
 def vacuum_checkpoints(checkpoint_dir: Path) -> None:
-    """Vacuum the checkpoint sqlite. Caller must ensure no saver holds it open."""
+    """Compress the SQLite checkpoint database using VACUUM.
+
+    Args:
+        checkpoint_dir: Directory containing the database.
+    """
     # VACUUM needs an exclusive lock — kept out of the background sweep, which
     # may run while an AsyncSqliteSaver has the db open.
     db_path = checkpoint_dir / "docs.sqlite"
@@ -37,10 +46,14 @@ def vacuum_checkpoints(checkpoint_dir: Path) -> None:
 
 
 def safe_sweep(repo_root: Path) -> None:
-    """Run :func:`sweep` + manifest TTL sweep; log any error and swallow it."""
+    """Run cleanup operations and suppress all exceptions.
+
+    Args:
+        repo_root: Repository base directory.
+    """
     try:
         sweep(repo_root / ".docspatch" / "checkpoints")
-        sweep_run_manifests(repo_root)
+        sweep_run_summaries(repo_root)
     except Exception as exc:  # noqa: BLE001 — janitor must never crash the command
         try:
             log = repo_root / ".docspatch" / "janitor.log"
@@ -52,7 +65,11 @@ def safe_sweep(repo_root: Path) -> None:
 
 
 def maybe_sweep(repo_root: Path) -> None:
-    """Sweep only if 24h passed since last sweep. Timestamp persists in repo config.toml."""
+    """Execute a repository checkpoint sweep and update the last sweep timestamp if the configured interval has elapsed.
+
+    Args:
+        repo_root: Base directory of the repository containing the checkpoints configuration.
+    """
     store = default_store(repo_root)
     last = int(read_toml(store.repo_path).get(LAST_SWEEP_KEY) or 0)
     now = int(time.time())
@@ -63,5 +80,12 @@ def maybe_sweep(repo_root: Path) -> None:
 
 
 def start_janitor(repo_root: Path) -> asyncio.Task[None]:
-    """Fire-and-forget once-per-day sweep. Returns the task for graceful tests."""
+    """Initialize a background cleanup task.
+
+    Args:
+        repo_root: Repository base directory.
+
+    Returns:
+        The background task object.
+    """
     return asyncio.create_task(asyncio.to_thread(maybe_sweep, repo_root))

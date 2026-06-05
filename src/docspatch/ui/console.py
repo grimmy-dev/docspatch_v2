@@ -1,4 +1,7 @@
-"""Shared Rich console instances."""
+"""Defines global Rich consoles and terminal measurement utilities."""
+
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from rich.console import Console
 
@@ -9,10 +12,23 @@ FALLBACK_WIDTH = 80
 FALLBACK_HEIGHT = 24
 
 
-def terminal_size() -> tuple[int, int]:
-    """Console ``(width, height)``, with an 80x24 fallback.
+@contextmanager
+def status(message: str, spinner: str = "dots") -> Iterator[None]:
+    """Display a working status spinner context manager.
 
-    Guards against a virtual terminal that reports 0 or errors on a size query.
+    Args:
+        message: The status message to show.
+        spinner: The spinner style name.
+    """
+    with console.status(message, spinner=spinner):
+        yield
+
+
+def terminal_size() -> tuple[int, int]:
+    """Retrieve the current terminal dimensions with fallbacks.
+
+    Returns:
+        A tuple containing the terminal width and height.
     """
     try:
         size = console.size

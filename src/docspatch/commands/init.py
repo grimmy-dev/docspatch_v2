@@ -1,11 +1,8 @@
-"""``dp init`` — interactive setup flow. Orchestration only."""
+"""CLI command for initializing workspace configuration, license choices, and project environment settings."""
 
 from pathlib import Path
 
-from docspatch.cache import ScoutCache
-from docspatch.llm import validate_api_key
-from docspatch.pipelines.scout.pipeline import pre_build
-from docspatch.ui import Prompter, QuestionaryPrompter, console
+from docspatch.ui import Prompter, QuestionaryPrompter, console, status
 from docspatch.utils.config import ConfigStore, default_store
 from docspatch.utils.ignore import ensure_docspatch_ignored
 from docspatch.utils.logging import get_logger
@@ -20,41 +17,41 @@ def run(
     reconfigure: bool = False,
     prompter: Prompter | None = None,
 ) -> None:
-    """Full ``dp init`` flow.
+    """Walk the user through configuring API providers, keys, and documentation licenses.
 
     Args:
-        repo_root: Repository root. Defaults to cwd.
-        global_config_path: Override for ``~/.docspatch/config.toml``. Test seam.
-        reconfigure: Re-prompt every field even if already set. Per-provider api
-            keys remain on disk so switching providers does not lose stored keys.
-        prompter: Interactive prompter. Defaults to :class:`QuestionaryPrompter`.
+        repo_root: Local directory where settings will be saved.
+        global_config_path: Optional file path overrides for global configurations.
+        reconfigure: Force prompt inputs even if configuration already exists.
+        prompter: Custom prompt interface to gather inputs.
     """
     repo_root = repo_root or Path.cwd()
     p = prompter or QuestionaryPrompter()
     store = resolve_store(repo_root, global_config_path)
+
+    # Deferred so a bare `dp`/`--help` never pays the provider-SDK import cost.
+    with status("Starting up…"):
+        from docspatch.llm import validate_api_key
 
     log.debug("init starting for repo: %s", repo_root)
     selections = ensure_configured(store, p, validate_api_key, reconfigure=reconfigure)
     select_license(repo_root, p, reconfigure=reconfigure)
     log.debug("config + license resolved; provider=%s", selections.provider)
 
-    ctx_store = ScoutCache(repo_root)
     ensure_docspatch_ignored(repo_root)
     console.print("[green]✓[/green] .docspatch added to .gitignore")
-
-    log.debug("starting scout pre-build")
-    pre_build(repo_root, ctx_store, store, selections.provider, selections.api_key, p)
+    console.print("[green]✓[/green] docspatch is ready. Run `dp docs` to document code or `dp readme` to generate a README.")
 
 
 def resolve_store(repo_root: Path, global_config_path: Path | None) -> ConfigStore:
-    """Determine the appropriate configuration storage based on provided paths.
+    """Load the ConfigStore using the provided or default global paths.
 
     Args:
-        repo_root: The path to the repository root.
-        global_config_path: Optional path to a custom global configuration file.
+        repo_root: Local workspace directory path.
+        global_config_path: Alternative file path for the global configuration file.
 
     Returns:
-        A ConfigStore instance pointing to the relevant config files.
+        A ConfigStore loaded with regional settings.
     """
     if global_config_path is None:
         return default_store(repo_root)

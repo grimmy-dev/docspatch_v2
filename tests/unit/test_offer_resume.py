@@ -20,7 +20,7 @@ def test_returns_none_when_no_incomplete_runs(monkeypatch: pytest.MonkeyPatch, t
     async def fake_list(root: Path) -> list[str]:
         return stub_no_runs(root)
 
-    monkeypatch.setattr(docs_cmd, "list_incomplete_runs", fake_list)
+    monkeypatch.setattr("docspatch.checkpoints.runs.list_incomplete_runs", fake_list)
     assert docs_cmd.offer_resume(tmp_path, ScriptedPrompter([])) is None
 
 
@@ -28,7 +28,7 @@ def test_returns_run_id_when_user_confirms(monkeypatch: pytest.MonkeyPatch, tmp_
     async def fake_list(root: Path) -> list[str]:
         return stub_one_run(root)
 
-    monkeypatch.setattr(docs_cmd, "list_incomplete_runs", fake_list)
+    monkeypatch.setattr("docspatch.checkpoints.runs.list_incomplete_runs", fake_list)
     monkeypatch.setattr(docs_cmd, "is_interactive", lambda: True)
     rid = docs_cmd.offer_resume(tmp_path, ScriptedPrompter([True]))
     assert rid == "20260520-000000-aaaaaa"
@@ -43,21 +43,19 @@ def test_discards_when_user_declines(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     async def fake_discard(_root: Path) -> None:
         discarded["called"] = True
 
-    monkeypatch.setattr(docs_cmd, "list_incomplete_runs", fake_list)
-    monkeypatch.setattr(docs_cmd, "discard_incomplete_runs", fake_discard)
+    monkeypatch.setattr("docspatch.checkpoints.runs.list_incomplete_runs", fake_list)
+    monkeypatch.setattr("docspatch.checkpoints.runs.discard_incomplete_runs", fake_discard)
     monkeypatch.setattr(docs_cmd, "is_interactive", lambda: True)
 
     assert docs_cmd.offer_resume(tmp_path, ScriptedPrompter([False])) is None
     assert discarded["called"]
 
 
-def test_headless_returns_none_without_prompting(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_headless_returns_none_without_prompting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     async def fake_list(root: Path) -> list[str]:
         return stub_one_run(root)
 
-    monkeypatch.setattr(docs_cmd, "list_incomplete_runs", fake_list)
+    monkeypatch.setattr("docspatch.checkpoints.runs.list_incomplete_runs", fake_list)
     monkeypatch.setattr(docs_cmd, "is_interactive", lambda: False)
     # Empty ScriptedPrompter would assert if confirm was called.
     assert docs_cmd.offer_resume(tmp_path, ScriptedPrompter([])) is None

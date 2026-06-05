@@ -61,27 +61,25 @@ def test_rejects_resume_with_paths(fake_repo: Path) -> None:
 
 # --- `--check` preview ---
 
-DOCUMENTED = 'def f():\n    """Does a thing."""\n    return 1\n'
+DOCUMENTED = '"""Module."""\n\n\ndef f():\n    """Does a thing."""\n    return 1\n'
 UNDOCUMENTED = "def f():\n    return 1\n"
 
 
 def test_check_clean_repo(fake_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    from docspatch.cache import DocsCache
     from docspatch.pipelines.docs.flags import preview_check
 
     src = fake_repo / "a.py"
     src.write_text(DOCUMENTED)
-    assert preview_check([src], fake_repo, DocsCache(fake_repo), "anthropic", "fast") is False
+    assert preview_check([src], fake_repo, {}, "anthropic", "fast") is False
     assert "All Python files documented" in capsys.readouterr().out
 
 
 def test_check_dirty_repo_shows_table(fake_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    from docspatch.cache import DocsCache
     from docspatch.pipelines.docs.flags import preview_check
 
     src = fake_repo / "a.py"
     src.write_text(UNDOCUMENTED)
-    assert preview_check([src], fake_repo, DocsCache(fake_repo), "anthropic", "fast") is True
+    assert preview_check([src], fake_repo, {}, "anthropic", "fast") is True
 
     out = capsys.readouterr().out
     assert "a.py" in out  # table lists the file

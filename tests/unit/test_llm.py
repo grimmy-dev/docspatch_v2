@@ -68,10 +68,10 @@ def test_invalid_provider_raises_config_error():
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
-def test_scout_model_is_fast_tier(provider):
+def test_analysis_model_is_fast_tier(provider):
     client = make_client(provider)
     fast = next(t.model for t in TIER_CATALOGUE[provider] if t.tier == "fast")
-    assert client.scout_model == fast
+    assert client.analysis_model == fast
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)

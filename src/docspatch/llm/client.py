@@ -1,4 +1,4 @@
-"""Single client over Anthropic / OpenAI / Gemini via LangChain, with retry-aware chains."""
+"""Provides an abstraction layer for making model calls and validating API keys."""
 
 from typing import cast
 
@@ -19,8 +19,14 @@ __all__ = ["LLM_RETRY", "LLMClient", "RetryCallback", "is_transient", "validate_
 
 
 def validate_api_key(provider: str, api_key: str) -> bool:
-    """True iff ``provider`` accepts ``api_key``. Thin wrapper for callers that
-    only need the boolean — avoids building a full :class:`LLMClient`.
+    """Dry-run a single call to verify API key validation with a fast LLM.
+
+    Args:
+        provider: Target provider.
+        api_key: Key to validate.
+
+    Returns:
+        True if valid.
     """
     return LLMClient(provider=provider, api_key=api_key).validate_key()
 
@@ -35,13 +41,16 @@ class LLMClient:
         generator_tier: str = "fast",
         retry_cb: RetryCallback | None = None,
     ) -> None:
-        """Initialize the LLM client with a provider and specific settings.
+        """Initialize the client with active credentials, model tiers, and rate limiter.
 
         Args:
-            provider: The name of the LLM provider.
-            api_key: The authentication key for the provider.
-            generator_tier: The performance tier for the generator model.
-            retry_cb: Optional callback for tracking retry attempts.
+            provider: Name of the LLM provider.
+            api_key: Authentication credentials.
+            generator_tier: Performance tier for text generation.
+            retry_cb: Callback for tracking retries.
+
+        Raises:
+            ConfigError: The provider API key is missing or blank.
         """
         self.provider: Provider = as_provider(provider)
         self.generator_tier: Tier = as_tier(generator_tier)
@@ -55,29 +64,28 @@ class LLMClient:
         self.gate = RateLimitGate(LLM_RETRY, on_retry=retry_cb)
 
     @property
-    def scout_model(self) -> str:
-        """Retrieve the identifier for the scouting model.
+    def analysis_model(self) -> str:
+        """Retrieve the fast model identifier designated for parsing and code analysis.
 
         Returns:
-            The name of the fast model suitable for scouting tasks.
+            Fast tier model identifier.
         """
         return resolve_tier_model(self.provider, "fast")
 
     @property
     def generator_model(self) -> str:
-        """Retrieve the identifier for the generator model.
+        """Retrieve the primary generation model identifier based on the initialized tier.
 
         Returns:
-            The name of the configured model for generation tasks.
+            Generator model identifier.
         """
         return resolve_tier_model(self.provider, self.generator_tier)
 
     def validate_key(self) -> bool:
-        """True if the API key is accepted; False on any error (no raise).
+        """Invoke a minimal query to verify model access, caching successful outcomes.
 
-        Consults the cross-process key cache first: a key validated within
-        :data:`docspatch.utils.key_cache.CACHE_TTL_SECONDS` skips the network
-        round-trip. Hash mismatch (key changed) bypasses the cache.
+        Returns:
+            True if valid.
         """
         if key_cache.is_validated(self.provider, self._api_key):
             return True
@@ -90,13 +98,13 @@ class LLMClient:
         return True
 
     def with_structured_output[T](self, schema: type[T]) -> TypedRunnable[T]:
-        """Configure the client to produce output matching a specific schema.
+        """Bind a Pydantic schema to direct model outputs to parse as JSON.
 
         Args:
-            schema: The Pydantic model class defining the desired structure.
+            schema: Pydantic model for validation.
 
         Returns:
-            A runnable instance configured for structured output.
+            Runnable instance.
         """
         base_chain = cast(
             Runnable[str, T],

@@ -1,15 +1,4 @@
-"""Prompter seam — single boundary between commands and the interactive layer.
-
-Two adapters ship with the package:
-
-- `QuestionaryPrompter`: the real terminal UI (default everywhere).
-- `ScriptedPrompter`: consumes a pre-recorded queue of answers. Used by tests
-  and the future `--yes` / headless mode so commands never need to monkeypatch
-  the global `questionary` module.
-
-Choices accept either a plain `list[str]` (label == value) or a `dict[label, value]`
-so commands can present friendly labels while returning typed values.
-"""
+"""Provides interactive prompts, fallback headless behavior, and scripted prompters for test scenarios."""
 
 import asyncio
 import os
@@ -25,7 +14,11 @@ Choices = list[str] | Mapping[str, object]
 
 
 def is_interactive() -> bool:
-    """True when prompting is safe — stdin is a TTY and no CI signal is set."""
+    """Evaluate if standard input is attached to a TTY and not running in a continuous integration pipeline.
+
+    Returns:
+        True if interactive prompts are supported, False otherwise.
+    """
     return sys.stdin.isatty() and not os.environ.get("CI")
 
 
@@ -34,23 +27,75 @@ class Prompter(Protocol):
     """Interactive question API. Implementations must return concrete values, not chains."""
 
     def select(self, question: str, choices: Choices, default: str | None = None) -> object:
-        """Pick one option. Returns the selected value (dict-style choices return the mapped value)."""
+        """Prompt the user to choose an option from a set of choices.
+
+        Args:
+            question: The query to present.
+            choices: The list or map of possible options.
+            default: The preselected fallback option.
+
+        Returns:
+            The chosen option.
+        """
         ...
 
     def password(self, question: str) -> str:
-        """Read a secret without echo. Raises on headless sessions — no safe fallback."""
+        """Prompt the user for sensitive string input with characters hidden.
+
+        Args:
+            question: The query to present.
+
+        Returns:
+            The entered secret string.
+        """
         ...
 
     def confirm(self, question: str, default: bool = True) -> bool:
-        """Yes/no prompt. Returns ``default`` when headless."""
+        """Prompt the user for a boolean confirmation.
+
+        Args:
+            question: The query to present.
+            default: The default boolean choice.
+
+        Returns:
+            The confirmed answer.
+        """
         ...
 
     def checkbox(self, question: str, choices: Choices) -> list[object]:
-        """Pick zero or more options. Returns the selected values in choice order."""
+        """Prompt the user to select multiple options from a set of choices.
+
+        Args:
+            question: The query to present.
+            choices: The list or map of options.
+
+        Returns:
+            The selected choice objects.
+        """
         ...
 
     def text(self, question: str, default: str = "") -> str:
-        """Free-form string. Returns ``default`` when headless or when input is empty."""
+        """Prompt the user for free-form single-line input.
+
+        Args:
+            question: The query to present.
+            default: The default input value.
+
+        Returns:
+            The text entered.
+        """
+        ...
+
+    def edit(self, question: str, default: str = "") -> str:
+        """Prompt the user to edit a multiline value in a text editor or multiline prompt.
+
+        Args:
+            question: The query to present.
+            default: The initial multiline content.
+
+        Returns:
+            The edited string.
+        """
         ...
 
 
@@ -62,7 +107,19 @@ class QuestionaryPrompter:
     """
 
     def select(self, question: str, choices: Choices, default: str | None = None) -> object:
-        """Ask the user to choose one option from a list."""
+        """Prompt the user to choose from a list using Questionary or fall back to default when headless.
+
+        Args:
+            question: The query to present.
+            choices: The list or map of options.
+            default: The preselected fallback option.
+
+        Returns:
+            The chosen option.
+
+        Raises:
+            ConfigError: No interactive console is available and no default is provided.
+        """
         if not is_interactive():
             if default is None:
                 raise ConfigError.headless_no_input(question)
@@ -70,52 +127,104 @@ class QuestionaryPrompter:
         return questionary.select(question, choices=_to_questionary_choices(choices), default=default).ask()
 
     def password(self, question: str) -> str:
-        """Ask the user to securely input a password string."""
+        """Prompt the user for a password using Questionary, requiring interactive mode.
+
+        Args:
+            question: The query to present.
+
+        Returns:
+            The hidden string input.
+
+        Raises:
+            ConfigError: No interactive console is available.
+        """
         if not is_interactive():
             raise ConfigError.headless_no_input(question)
         return str(questionary.password(question).ask())
 
     def confirm(self, question: str, default: bool = True) -> bool:
-        """Ask the user for a yes-no confirmation."""
+        """Prompt the user for confirmation using Questionary.
+
+        Args:
+            question: The query to present.
+            default: The default boolean choice.
+
+        Returns:
+            The chosen boolean value.
+        """
         if not is_interactive():
             return default
         result = questionary.confirm(question, default=default).ask()
         return bool(result)
 
     def checkbox(self, question: str, choices: Choices) -> list[object]:
-        """Ask the user to select multiple items from a list."""
+        """Prompt the user to select multiple choices using Questionary.
+
+        Args:
+            question: The query to present.
+            choices: The options list.
+
+        Returns:
+            The list of selected choice objects.
+        """
         if not is_interactive():
             return []
         return questionary.checkbox(question, choices=_to_questionary_choices(choices)).ask() or []
 
     def text(self, question: str, default: str = "") -> str:
-        """Ask the user to provide a text string input."""
+        """Prompt the user for single-line text using Questionary.
+
+        Args:
+            question: The query to present.
+            default: The default text.
+
+        Returns:
+            The entered text.
+        """
         if not is_interactive():
             return default
         result = questionary.text(question, default=default).ask()
         return "" if result is None else str(result)
+
+    def edit(self, question: str, default: str = "") -> str:
+        """Prompt the user for multiline text input using Questionary.
+
+        Args:
+            question: The query to present.
+            default: The default multiline text.
+
+        Returns:
+            The resulting multiline string.
+        """
+        if not is_interactive():
+            return default
+        result = questionary.text(question, default=default, multiline=True).ask()
+        return default if result is None else str(result)
 
 
 class ScriptedPrompter:
     """Replays answers in order. One answer consumed per call; raises if exhausted."""
 
     def __init__(self, answers: Iterable[object]) -> None:
-        """Initialize the prompter with a predefined list of answers.
+        """Configure the scripted prompter with a predefined list of replies.
 
         Args:
-            answers: An iterable of return values for successive prompts.
+            answers: The sequence of mock answers to yield.
         """
         self._answers = list(answers)
         self._index = 0
 
     def _next(self, question: str) -> object:
-        """Retrieve the next scripted answer for a prompt.
+        """Retrieve the next scripted answer from the sequence.
 
         Args:
-            question: The prompt text currently being answered.
+            question: The query associated with this step.
 
         Returns:
-            The next scripted response value.
+            The scripted answer.
+
+        Raises:
+            AssertionError: The prompter runs out of predefined scripted answers.
         """
         if self._index >= len(self._answers):
             raise AssertionError(f"ScriptedPrompter ran out of answers at: {question!r}")
@@ -124,46 +233,103 @@ class ScriptedPrompter:
         return answer
 
     def select(self, question: str, choices: Choices, default: str | None = None) -> object:
-        """Provide the next scripted value for a selection prompt."""
+        """Retrieve the next scripted answer for a selection query.
+
+        Args:
+            question: The query description.
+            choices: The list of potential options.
+            default: The default option.
+
+        Returns:
+            The scripted answer.
+        """
         return self._next(question)
 
     def password(self, question: str) -> str:
-        """Provide the next scripted value for a password prompt."""
+        """Retrieve the next scripted answer as a password.
+
+        Args:
+            question: The query description.
+
+        Returns:
+            The scripted password string.
+        """
         value = self._next(question)
         return str(value)
 
     def confirm(self, question: str, default: bool = True) -> bool:
-        """Provide the next scripted value for a confirmation prompt."""
+        """Retrieve the next scripted answer as a boolean confirmation.
+
+        Args:
+            question: The query description.
+            default: The default boolean confirmation.
+
+        Returns:
+            The scripted boolean answer.
+        """
         return bool(self._next(question))
 
     def checkbox(self, question: str, choices: Choices) -> list[object]:
-        """Provide the next scripted value for a checkbox prompt."""
+        """Retrieve the next scripted answer as a list of choices.
+
+        Args:
+            question: The query description.
+            choices: The list of potential options.
+
+        Returns:
+            The list of selected options.
+        """
         value = self._next(question)
         return list(cast(Any, value)) if value is not None else []
 
     def text(self, question: str, default: str = "") -> str:
-        """Provide the next scripted value for a text prompt."""
+        """Retrieve the next scripted answer as a single-line string.
+
+        Args:
+            question: The query description.
+            default: The default text.
+
+        Returns:
+            The scripted text.
+        """
         value = self._next(question)
         return "" if value is None else str(value)
 
+    def edit(self, question: str, default: str = "") -> str:
+        """Retrieve the next scripted answer as an edited multiline string.
+
+        Args:
+            question: The query description.
+            default: The default text.
+
+        Returns:
+            The scripted multiline text.
+        """
+        value = self._next(question)
+        return default if value is None else str(value)
+
 
 async def aprompt[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T:
-    """Run a sync prompter call in a worker thread.
+    """Run a synchronous prompter query within a separate executor thread.
 
-    Use inside any ``async def`` that needs to prompt — questionary spins its
-    own ``asyncio.run`` internally, which raises ``RuntimeError`` if invoked
-    from inside an already-running loop. Off-loading via ``asyncio.to_thread``
-    gives questionary a clean thread with no active loop.
+    Args:
+        fn: The synchronous prompting function.
 
-    Example::
-
-        choice = await aprompt(prompter.confirm, "Continue?")
+    Returns:
+        The value returned by the prompt function.
     """
     return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 def _to_questionary_choices(choices: Choices) -> list[str | questionary.Choice]:
-    """Bridge to questionary.Choice for dict-style label/value pairs."""
+    """Convert choices into a standard list of Questionary Choice objects.
+
+    Args:
+        choices: The raw choices list or mapping.
+
+    Returns:
+        A list of Questionary-compatible choice options.
+    """
     if isinstance(choices, Mapping):
         return [questionary.Choice(label, value=value) for label, value in choices.items()]
     return list(choices)

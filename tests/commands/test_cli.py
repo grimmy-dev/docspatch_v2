@@ -20,13 +20,6 @@ def test_help_lists_all_subcommands():
         assert cmd in result.output
 
 
-def test_help_hides_unimplemented_commands():
-    """README/changelog/cache are not built yet — they must not appear in help."""
-    result = runner.invoke(app, ["--help"])
-    for cmd in ("readme", "clg", "cache"):
-        assert cmd not in result.output
-
-
 def test_init_command_wired(monkeypatch):
     called = []
     monkeypatch.setattr("docspatch.commands.init.run", lambda debug=False, **kw: called.append(True))

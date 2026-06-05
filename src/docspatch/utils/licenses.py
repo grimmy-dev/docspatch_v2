@@ -1,9 +1,4 @@
-"""License catalogue. Maps SPDX identifiers to LICENSE file bodies.
-
-The license texts are large static blobs, so they live as plain ``.txt`` files
-under ``docspatch/resources/licenses/`` rather than in source. This module is
-only the identifier list and the lookup.
-"""
+"""Loads standard license templates from package resources and inserts copyright headers."""
 
 from importlib.resources import files
 
@@ -24,14 +19,42 @@ _LICENSE_DIR = files("docspatch.resources").joinpath("licenses")
 
 
 def available() -> list[str]:
-    """SPDX-style identifiers for every license docspatch can write."""
+    """Get the identifiers of all supported licenses.
+
+    Returns:
+        List of standard license identifier strings.
+    """
     return list(LICENSE_IDS)
 
 
-def text(name: str) -> str | None:
-    """Return the LICENSE file body for ``name``.
+def insert_copyright(body: str, name: str, year: int) -> str:
+    """Insert a copyright notice line immediately below the license header if missing.
 
-    Returns ``None`` for ``Proprietary`` (no body) or any unknown identifier.
+    Args:
+        body: Full text of the license template.
+        name: Copyright holder's name.
+        year: Copyright declaration year.
+
+    Returns:
+        Modified license text containing the copyright notice.
+    """
+    if "Copyright (c)" in body:
+        return body
+    lines = body.splitlines()
+    if not lines:
+        return body
+    lines.insert(1, f"\nCopyright (c) {year} {name}")
+    return "\n".join(lines) + "\n"
+
+
+def text(name: str) -> str | None:
+    """Load the template text of a supported license from package resources.
+
+    Args:
+        name: Supported license identifier.
+
+    Returns:
+        Content of the license text file, or null if not found.
     """
     if name not in LICENSE_IDS:
         return None

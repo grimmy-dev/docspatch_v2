@@ -1,8 +1,4 @@
-"""Two-layer config: global ``~/.docspatch/config.toml`` + per-repo ``.docspatch/config.toml``.
-
-All reads + writes go through :class:`ConfigStore`. Writes use ``tomli_w`` (round-trip
-safe; correct quote/backslash escaping) instead of a handwritten serialiser.
-"""
+"""Loads, resolves, and persists local and global configuration parameters using TOML storage."""
 
 import tomllib
 from dataclasses import dataclass
@@ -44,14 +40,21 @@ class ConfigStore:
     # ── reads ────────────────────────────────────────────────────────────
 
     def read(self) -> DocspatchConfig:
-        """Load the combined documentation configuration from storage."""
+        """Retrieve combined local and global settings into a single configuration object.
+
+        Returns:
+            The resolved configuration settings object.
+        """
         return load_config(global_path=self.global_path, repo_path=self.repo_path)
 
     def api_key_for(self, provider: str) -> str | None:
-        """Return ``api_key_<provider>`` from repo or global config, or None if absent.
+        """Look up the API credential key for an LLM provider within local or global TOML configs.
 
-        Repo wins. Looked up directly so switching providers reuses a previously
-        stored key without re-prompting.
+        Args:
+            provider: Name of the provider whose API key to lookup.
+
+        Returns:
+            The API key string, or None if not configured in local or global settings.
         """
         field = f"api_key_{provider}"
         for path in (self.repo_path, self.global_path):
@@ -63,15 +66,31 @@ class ConfigStore:
     # ── writes ───────────────────────────────────────────────────────────
 
     def write_global(self, patch: ConfigPatch) -> None:
-        """Persist a patch to the global configuration file."""
+        """Save a partial configuration update to the global user settings file.
+
+        Args:
+            patch: Partial configuration update dictionary.
+        """
         merge_write(self.global_path, patch)
 
     def write_repo(self, patch: ConfigPatch) -> None:
-        """Persist a patch to the repository-specific configuration file."""
+        """Save a partial configuration update to the local workspace settings file.
+
+        Args:
+            patch: Partial configuration update dictionary.
+        """
         merge_write(self.repo_path, patch)
 
     def set(self, key: str, raw_value: str) -> WrittenKey:
-        """Coerce and persist a single key. Scope is inferred from the key."""
+        """Convert, write, and persist a single configuration value to its designated global or local file.
+
+        Args:
+            key: Configuration option name to set.
+            raw_value: Raw string value representing the new setting.
+
+        Returns:
+            A WrittenKey tuple capturing the name, coerced value, and resolved scope.
+        """
         coerced = self.coerce(key, raw_value)
         scope = self.scope_for(key)
         if scope == "global":
@@ -84,10 +103,16 @@ class ConfigStore:
 
     @staticmethod
     def scope_for(key: str) -> Scope:
-        """Return the scope (``global``/``repo``) where ``key`` lives.
+        """Resolve whether a configuration parameter belongs in global or repo-local storage.
+
+        Args:
+            key: Configuration option name to classify.
+
+        Returns:
+            The resolved Scope string ('global' or 'repo').
 
         Raises:
-            ConfigError: When ``key`` is not a recognised config field.
+            ConfigError: The key is unrecognized.
         """
         if key in GLOBAL_CONFIG_KEYS or key.startswith("api_key"):
             return "global"
@@ -98,7 +123,18 @@ class ConfigStore:
 
     @staticmethod
     def coerce(key: str, value: str) -> ConfigValue:
-        """Coerce a raw string value to the type expected by ``key``."""
+        """Convert a configuration string value into its required integer or string data type.
+
+        Args:
+            key: Configuration key guiding the conversion type.
+            value: Raw string value to transform.
+
+        Returns:
+            The type-coerced configuration value.
+
+        Raises:
+            ConfigError: The configuration value cannot be parsed as the target type.
+        """
         if key in INT_CONFIG_KEYS:
             try:
                 return int(value)
@@ -108,7 +144,14 @@ class ConfigStore:
 
 
 def default_store(repo_root: Path | None = None) -> ConfigStore:
-    """Canonical :class:`ConfigStore` rooted at ``~/.docspatch`` + ``<repo_root>/.docspatch``."""
+    """Instantiate a ConfigStore using default user-home and local directory settings paths.
+
+    Args:
+        repo_root: Custom base directory path for local repository configurations.
+
+    Returns:
+        A ConfigStore initialized with global and local configuration paths.
+    """
     root = repo_root or Path.cwd()
     return ConfigStore(
         global_path=Path.home() / ".docspatch" / "config.toml",
@@ -117,7 +160,15 @@ def default_store(repo_root: Path | None = None) -> ConfigStore:
 
 
 def load_config(global_path: Path | None = None, repo_path: Path | None = None) -> DocspatchConfig:
-    """Merge global and repo configs. Per-repo wins. Missing keys fall back to defaults."""
+    """Load, merge, and resolve configurations from multiple scopes into a single settings container.
+
+    Args:
+        global_path: Path to the global TOML settings file.
+        repo_path: Path to the repository-local TOML settings file.
+
+    Returns:
+        A compiled DocspatchConfig containing scoped values for all configuration properties.
+    """
     global_data = read_toml(global_path)
     repo_data = read_toml(repo_path)
 
@@ -137,7 +188,7 @@ def load_config(global_path: Path | None = None, repo_path: Path | None = None) 
         provider=resolve("provider"),
         api_key=ScopedValue(api_key_val, api_key_scope),
         generator_model=resolve("generator_model"),
-        scout_model=resolve("scout_model"),
+        analysis_model=resolve("analysis_model"),
         tone=resolve("tone"),
         batch_token_limit=resolve("batch_token_limit"),
         concurrency_limit=resolve("concurrency_limit"),
@@ -146,7 +197,14 @@ def load_config(global_path: Path | None = None, repo_path: Path | None = None) 
 
 
 def read_toml(path: Path | None) -> dict[str, Any]:
-    """Parse a TOML file. Returns ``{}`` on any error or missing file."""
+    """Read and parse a TOML file, returning an empty dictionary on error or absence.
+
+    Args:
+        path: File system path pointing to the TOML file.
+
+    Returns:
+        A dictionary containing parsed TOML keys, or an empty dictionary if missing or malformed.
+    """
     if path is None:
         return {}
     try:
@@ -156,10 +214,11 @@ def read_toml(path: Path | None) -> dict[str, Any]:
 
 
 def merge_write(path: Path, patch: ConfigPatch) -> None:
-    """Merge ``patch`` over existing file content and write atomically.
+    """Merge updates with existing settings and write them atomically to the TOML configuration file.
 
-    ``None`` values in ``patch`` are dropped so a partial update never wipes
-    fields the caller did not intend to touch.
+    Args:
+        path: Destination file path for writing the merged config.
+        patch: Dictionary containing setting updates.
     """
     existing = read_toml(path)
     merged: dict[str, Any] = {**existing, **{k: v for k, v in patch.items() if v is not None}}

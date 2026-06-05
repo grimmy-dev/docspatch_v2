@@ -1,14 +1,9 @@
-"""Reusable rich-based UI primitives.
+"""Terminal UI: progress bars, panels, diff renderers, and prompters."""
 
-Commands and pipeline nodes import from here only — never `rich` directly —
-so layout, spinner, and progress changes land in one place.
-"""
-
-from docspatch.ui.console import console, err_console
+from docspatch.ui.console import console, err_console, status
 from docspatch.ui.panels import cost_panel, kv_panel, warning_panel
 from docspatch.ui.progress import progress_bar
 from docspatch.ui.prompter import Prompter, QuestionaryPrompter, ScriptedPrompter, aprompt
-from docspatch.ui.status import status
 from docspatch.ui.summary import cache_hit_row, cost_rows, render_summary
 from docspatch.ui.tables import build_table
 

@@ -15,9 +15,7 @@ from docspatch.utils.fs import atomic_write
 from docspatch.utils.lockfile import run_lock
 
 
-def test_atomic_write_keyboardinterrupt_leaves_original_intact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_atomic_write_keyboardinterrupt_leaves_original_intact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "out.txt"
     target.write_text("original")
 
@@ -37,9 +35,7 @@ def test_atomic_write_keyboardinterrupt_leaves_original_intact(
     assert list(tmp_path.glob("*.tmp")) == []
 
 
-def test_atomic_write_oserror_leaves_original_intact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_atomic_write_oserror_leaves_original_intact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "out.txt"
     target.write_text("original")
 

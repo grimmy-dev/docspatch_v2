@@ -3,7 +3,25 @@
 import tomllib
 
 from docspatch.utils.config import ConfigStore, load_config
-from docspatch.utils.project import get_dir_tree, get_pyproject_field
+from docspatch.utils.licenses import insert_copyright
+from docspatch.utils.project import (
+    entry_point_targets,
+    get_dir_tree,
+    get_pyproject_field,
+    is_entry_point_path,
+)
+
+
+def test_insert_copyright_adds_line_after_title():
+    out = insert_copyright("MIT License\n\nPermission is hereby...\n", "Ada Lovelace", 2026)
+    assert out.splitlines()[0] == "MIT License"
+    assert "Copyright (c) 2026 Ada Lovelace" in out
+
+
+def test_insert_copyright_skips_when_already_present():
+    body = "MIT License\n\nCopyright (c) 1999 Bob\n\nPermission...\n"
+    assert insert_copyright(body, "Ada", 2026) == body
+
 
 # ── config ─────────────────────────────────────────────────────────────────
 
@@ -65,6 +83,34 @@ def test_project_existing_field_returned(tmp_path):
 
 def test_project_missing_file_returns_none(tmp_path):
     assert get_pyproject_field(tmp_path / "pyproject.toml", "name") is None
+
+
+def test_entry_point_targets_collects_scripts_gui_and_entry_points(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project.scripts]\n"
+        'dp = "docspatch.cli:app"\n'
+        "[project.gui-scripts]\n"
+        'dp-gui = "docspatch.gui:main"\n'
+        "[project.entry-points.pytest11]\n"
+        'plug = "docspatch.plugin"\n'
+    )
+    assert entry_point_targets(tmp_path) == {"docspatch.cli", "docspatch.gui", "docspatch.plugin"}
+
+
+def test_entry_point_targets_empty_for_library(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "lib"\n')
+    assert entry_point_targets(tmp_path) == set()
+
+
+def test_is_entry_point_path_matches_module_and_src_layout():
+    modules = {"docspatch.cli"}
+    assert is_entry_point_path("src/docspatch/cli.py", modules)
+    assert is_entry_point_path("docspatch/cli.py", modules)
+    assert not is_entry_point_path("src/docspatch/other.py", modules)
+
+
+def test_is_entry_point_path_matches_package_init():
+    assert is_entry_point_path("src/pkg/cli/__init__.py", {"pkg.cli"})
 
 
 def test_configstore_writes_escapes_quotes_safely(tmp_path):

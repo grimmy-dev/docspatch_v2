@@ -1,10 +1,5 @@
-"""Commit node: write reviewed docstrings to disk transactionally.
-
-Per file: re-check the on-disk hash against the cache, snapshot the original,
-insert the docstrings, append to a journal. A failure part-way through
-restores every file already written from its snapshot. A clean run deletes
-the journal and snapshots; an interrupted run resumes from the journal.
-"""
+"""Apply accepted docstrings to source files, journalling writes with snapshots
+for rollback and detecting files changed on disk since planning."""
 
 import ast
 import gzip
@@ -16,16 +11,16 @@ from pathlib import Path
 
 from langgraph.types import interrupt
 
-from docspatch.cache import FileDocState, FunctionDocState
 from docspatch.source import (
-    MODULE_QUALNAME,
     DocstringInsert,
     file_hash,
     insert_docstrings,
-    scan_functions,
 )
 from docspatch.ui import console, status
 from docspatch.utils.fs import atomic_write
+from docspatch.utils.logging import get_logger
+
+log = get_logger("docs.commit")
 
 
 class CommitJournal:
@@ -36,11 +31,11 @@ class CommitJournal:
     """
 
     def __init__(self, checkpoint_dir: Path, run_id: str) -> None:
-        """Initialize the commit journal with checkpoint directory and run identifier.
+        """Construct a commit journal tracking file system updates under the checkpoint directory.
 
         Args:
             checkpoint_dir: The directory used for storing run state.
-            run_id: A unique ID for the current batch process.
+            run_id: A unique identifier for the current batch process.
         """
         self.path = checkpoint_dir / f"commit-{run_id}.journal"
         # Load once; mutate on append. Membership is O(1) and rollback keeps order.
@@ -48,15 +43,31 @@ class CommitJournal:
         self._set: set[str] = set(self._order)
 
     def committed_order(self) -> list[str]:
-        """Repo-relative paths recorded so far, in commit order. Used for rollback restore."""
+        """Return the ordered sequence of file paths committed during the current run.
+
+        Returns:
+            The list of committed paths.
+        """
         return list(self._order)
 
     def is_committed(self, rel: str) -> bool:
-        """True when ``rel`` has already been journalled in this run."""
+        """Determine whether a specific file has already been journaled as committed.
+
+        Args:
+            rel: The relative file path.
+
+        Returns:
+            True if the file is committed.
+        """
         return rel in self._set
 
     def append(self, rel: str, file_hash_after: str) -> None:
-        """Record one committed file."""
+        """Write a new file commit record containing its post-write hash into the journal file.
+
+        Args:
+            rel: The relative file path.
+            file_hash_after: The hash of the file after document insertion.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         record = {"rel": rel, "ts": time.time(), "file_hash_after": file_hash_after}
         with self.path.open("a", encoding="utf-8") as fh:
@@ -65,17 +76,20 @@ class CommitJournal:
         self._set.add(rel)
 
     def delete(self) -> None:
-        """Remove the current journal file from the file system."""
+        """Unlink the journal file on disk and clear all cached tracking sequences."""
         self.path.unlink(missing_ok=True)
         self._order.clear()
         self._set.clear()
 
 
 def _read_journal(path: Path) -> list[str]:
-    """Repo-relative paths from an existing journal in commit order.
+    """Load and parse a line-delimited JSON journal file to construct the sequence of committed paths.
 
-    Skips malformed lines silently so a partial write from a hard crash does
-    not block the resume.
+    Args:
+        path: The file system path to the journal.
+
+    Returns:
+        A list of paths in order.
     """
     if not path.exists():
         return []
@@ -85,41 +99,59 @@ def _read_journal(path: Path) -> list[str]:
             continue
         try:
             rels.append(json.loads(line)["rel"])
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except json.JSONDecodeError, KeyError, TypeError:
             continue
     return rels
 
 
 def _snapshot_file(snapshot_dir: Path, rel: str) -> Path:
-    """Construct the path for a gzipped snapshot file.
+    """Resolve the gzipped snapshot path corresponding to a relative file identifier.
 
     Args:
-        snapshot_dir: The directory to store snapshots.
+        snapshot_dir: The directory containing snapshots.
         rel: The relative path identifier.
 
     Returns:
-        A path object pointing to the specific snapshot.
+        The Path object to the snapshot.
     """
     return snapshot_dir / f"{rel}.gz"
 
 
 def write_snapshot(snapshot_dir: Path, rel: str, content: str) -> None:
-    """Gzip the original file content before it is overwritten."""
+    """Compress and save the current source file content into a backup snapshot.
+
+    Args:
+        snapshot_dir: The directory to write the snapshot to.
+        rel: The relative file path identifier.
+        content: The raw file content to store.
+    """
     path = _snapshot_file(snapshot_dir, rel)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(gzip.compress(content.encode("utf-8")))
 
 
 def read_snapshot(snapshot_dir: Path, rel: str) -> str:
-    """Read back a snapshotted original."""
+    """Decompress and load the original source text from a backup snapshot.
+
+    Args:
+        snapshot_dir: The directory holding snapshots.
+        rel: The relative file path identifier.
+
+    Returns:
+        The original file text.
+    """
     return gzip.decompress(_snapshot_file(snapshot_dir, rel).read_bytes()).decode("utf-8")
 
 
 def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is GraphContext
-    """Write every accepted docstring to disk. The docs graph's commit node.
+    """Apply accepted docstrings to physical files while executing safety checks and rollback routines.
 
-    Returns ``committed_files`` + ``skipped_files`` on success, or
-    ``commit_error`` after rolling back when a write fails mid-sweep.
+    Args:
+        ctx: The GraphContext object.
+        state: The review workflow state dictionary.
+
+    Returns:
+        A dictionary reporting committed files, skipped files, or errors.
     """
     accepted = set(state.get("accepted", []))
     entries = [e for e in state.get("entries", []) if f"{e.rel}::{e.qualname}" in accepted]
@@ -134,23 +166,21 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
 
     committed = journal.committed_order()
     skipped: list[str] = []
-    # Remember the pre-commit cache entry for every file we mutate so a rollback
-    # can restore it. Without this, _rollback restores disk to original content
-    # while the cache still points at the post-insert hash, and the next run
-    # mis-detects every rolled-back file as edited on disk.
-    cache_snapshots: dict[str, FileDocState | None] = {}
+    log.debug("commit start: %d file(s), %d accepted entry(ies), %d already journalled", len(by_file), len(entries), len(committed))
 
     with status(f"Writing {len(by_file)} file(s)..."):
         for rel in sorted(by_file):
             if journal.is_committed(rel):
+                log.debug("skip %s — already committed this run", rel)
                 continue
             path = ctx.repo_root / rel
             source = path.read_text()
 
             if _conflict(ctx, rel, source):
                 action = _resolve_conflict(ctx, rel)
+                log.debug("conflict on %s — resolved as %s", rel, action)
                 if action == "abort":
-                    _rollback(ctx, journal, snapshot_dir, cache_snapshots)
+                    _rollback(ctx, journal, snapshot_dir)
                     return {"commit_error": f"commit aborted at {rel} — file changed on disk"}
                 if action == "skip":
                     skipped.append(rel)
@@ -169,43 +199,45 @@ def commit_docstrings(ctx, state: dict) -> dict:  # noqa: ANN001 — ctx is Grap
                 write_snapshot(snapshot_dir, rel, source)
                 atomic_write(path, new_source)
             except Exception as exc:  # noqa: BLE001 — any write failure rolls the sweep back
-                _rollback(ctx, journal, snapshot_dir, cache_snapshots)
+                log.debug("write failed on %s: %s — rolling back %d file(s)", rel, exc, len(journal.committed_order()))
+                _rollback(ctx, journal, snapshot_dir)
                 return {"commit_error": f"{rel}: {exc}"}
 
-            new_hash = file_hash(new_source)
-            journal.append(rel, new_hash)
-            if ctx.cache is not None:
-                # Stat after write so next run fast-skips via size+mtime.
-                st = path.stat()
-                prior = ctx.cache.get(rel)
-                cache_snapshots[rel] = prior
-                ctx.cache.set(
-                    rel,
-                    FileDocState(
-                        path=rel,
-                        file_hash=new_hash,
-                        functions=_functions_after_insert(prior, inserts, new_source),
-                        size=st.st_size,
-                        mtime_ns=st.st_mtime_ns,
-                    ),
-                )
+            journal.append(rel, file_hash(new_source))
             committed.append(rel)
+            log.debug("wrote %s (%d docstring(s))", rel, len(inserts))
 
     journal.delete()
     shutil.rmtree(snapshot_dir, ignore_errors=True)
+    log.debug("commit done: %d written, %d skipped", len(committed), len(skipped))
     return {"committed_files": committed, "skipped_files": skipped}
 
 
 def _conflict(ctx, rel: str, source: str) -> bool:  # noqa: ANN001
-    """True when the on-disk file no longer matches the hash the cache recorded."""
-    if ctx.cache is None:
-        return False
-    cached = ctx.cache.get(rel)
-    return cached is not None and cached.file_hash != file_hash(source)
+    """Verify if the current file content on disk differs from its plan-time hash.
+
+    Args:
+        ctx: The GraphContext containing planned hashes.
+        rel: The relative path of the file.
+        source: The current source text of the file on disk.
+
+    Returns:
+        True when the current source differs from the plan-time hash.
+    """
+    planned = ctx.plan_hashes.get(rel)
+    return planned is not None and planned != file_hash(source)
 
 
 def _resolve_conflict(ctx, rel: str) -> str:  # noqa: ANN001
-    """Ask the user how to handle a concurrently-edited file: skip / force / abort."""
+    """Prompt the user or default to skipping when a file modification conflict is found.
+
+    Args:
+        ctx: The GraphContext containing execution parameters.
+        rel: The relative path of the conflicting file.
+
+    Returns:
+        The selected resolution action as a string.
+    """
     if not ctx.interactive:
         console.print(f"[yellow]⚠ skipped {rel} — file changed on disk[/yellow]")
         return "skip"
@@ -213,52 +245,15 @@ def _resolve_conflict(ctx, rel: str) -> str:  # noqa: ANN001
     return str(choice.get("action", "skip"))
 
 
-def _rollback(  # noqa: ANN001
-    ctx,
-    journal: CommitJournal,
-    snapshot_dir: Path,
-    cache_snapshots: dict[str, FileDocState | None],
-) -> None:
-    """Restore every journalled file from its snapshot and revert the docs cache.
+def _rollback(ctx, journal: CommitJournal, snapshot_dir: Path) -> None:  # noqa: ANN001
+    """Revert all modified source files tracked in the journal using backup snapshots.
 
-    Disk and cache must stay in lockstep: if disk goes back to the pre-commit
-    content, the cache entry must follow. Otherwise the next run sees a cache
-    that recorded the post-insert hash for content that no longer matches and
-    flags every rolled-back file as edited-on-disk.
+    Args:
+        ctx: The GraphContext of the run.
+        journal: The CommitJournal instance tracking commits.
+        snapshot_dir: The directory containing backup snapshots.
     """
     for rel in journal.committed_order():
         atomic_write(ctx.repo_root / rel, read_snapshot(snapshot_dir, rel))
-        if ctx.cache is not None and rel in cache_snapshots:
-            prior = cache_snapshots[rel]
-            if prior is None:
-                ctx.cache.delete(rel)
-            else:
-                ctx.cache.set(rel, prior)
     journal.delete()
     shutil.rmtree(snapshot_dir, ignore_errors=True)
-
-
-def _functions_after_insert(
-    prior: FileDocState | None,
-    inserts: list[DocstringInsert],
-    new_source: str,
-) -> dict[str, FunctionDocState]:
-    """Function state after inserting ``inserts``. Mutates prior cache (hashes
-    exclude docstrings, so only ``has_docstring`` flips). Re-scans on cache
-    miss or unknown qualname.
-    """
-    if prior is None:
-        return scan_functions(new_source)
-    functions = dict(prior.functions)
-    for ins in inserts:
-        if ins.qualname == MODULE_QUALNAME:
-            continue
-        cached = functions.get(ins.qualname)
-        if cached is None:
-            return scan_functions(new_source)
-        functions[ins.qualname] = FunctionDocState(
-            hash=cached.hash,
-            has_docstring=True,
-            line_start=cached.line_start,
-        )
-    return functions

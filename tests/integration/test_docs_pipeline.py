@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from docspatch.cache import DocsCache, FileDocState
 from docspatch.llm import TokenUsage
 from docspatch.pipelines.docs import run_docs
 from docspatch.pipelines.docs.flags import RunFlags
@@ -31,12 +30,28 @@ class FakeGenerator:
         return {i.key: self.canned for i in items}, FAKE_USAGE
 
 
+class DiskMutatingGenerator(FakeGenerator):
+    """Overwrites the target file during generation — after planning captured its
+    hash but before commit reads it — to provoke an on-disk conflict."""
+
+    def __init__(self, target: Path, new_text: str, docstring: str = "d.") -> None:
+        super().__init__(docstring)
+        self.target = target
+        self.new_text = new_text
+        self._mutated = False
+
+    async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
+        if not self._mutated:
+            self.target.write_text(self.new_text)
+            self._mutated = True
+        return await super().generate_batch(items, tone)
+
+
 def go(
     paths: list[Path],
     generator: DocstringGenerator,
     *,
     tmp_path: Path,
-    cache: DocsCache | None = None,
     concurrency_limit: int = 2,
     flags: RunFlags | None = None,
     run_id: str | None = None,
@@ -53,7 +68,6 @@ def go(
             concurrency_limit=concurrency_limit,
             provider="anthropic",
             tier="fast",
-            cache=cache,
             auto_confirm=True,
             run_id=run_id,
         )
@@ -123,9 +137,7 @@ def test_fresh_run_has_no_remarks(tmp_path: Path) -> None:
     assert generator.remarks is None
 
 
-def test_resume_restores_remarks_from_checkpoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resume_restores_remarks_from_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import docspatch.pipelines.docs.commit as commit_mod
 
     src = tmp_path / "m.py"
@@ -153,9 +165,7 @@ def test_resume_restores_remarks_from_checkpoint(
     assert healthy.remarks == "Use British spelling."
 
 
-def test_list_incomplete_runs_finds_a_killed_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_list_incomplete_runs_finds_a_killed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import docspatch.pipelines.docs.commit as commit_mod
     from docspatch.checkpoints.runs import list_incomplete_runs
 
@@ -174,9 +184,7 @@ def test_list_incomplete_runs_finds_a_killed_run(
     assert asyncio.run(list_incomplete_runs(tmp_path)) == [run_id]
 
 
-def test_summary_panel_reports_real_tokens(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_summary_panel_reports_real_tokens(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     src = tmp_path / "m.py"
     src.write_text("def f():\n    return 1\n")
 
@@ -189,7 +197,7 @@ def test_summary_panel_reports_real_tokens(
 
 def test_fully_documented_file_is_noop(tmp_path: Path) -> None:
     src = tmp_path / "sample.py"
-    original = 'def add(a: int, b: int) -> int:\n    """Add two numbers."""\n    return a + b\n'
+    original = '"""Module."""\n\n\ndef add(a: int, b: int) -> int:\n    """Add two numbers."""\n    return a + b\n'
     src.write_text(original)
 
     generator = FakeGenerator()
@@ -229,17 +237,17 @@ def test_preserves_surrounding_code(tmp_path: Path) -> None:
     assert "return a + b" in result
 
 
-def test_writes_cache_entry_after_generation(tmp_path: Path) -> None:
+def test_records_manifest_after_generation(tmp_path: Path) -> None:
+    from docspatch.manifest import ChangeManifest
+
     src = tmp_path / "sample.py"
     src.write_text("def add(a: int, b: int) -> int:\n    return a + b\n")
-    cache = DocsCache(tmp_path)
 
-    go([src], FakeGenerator(docstring="Add a and b."), tmp_path=tmp_path, cache=cache)
+    go([src], FakeGenerator(docstring="Add a and b."), tmp_path=tmp_path)
 
-    state = cache.get("sample.py")
-    assert state is not None
-    assert "add" in state.functions
-    assert state.functions["add"].has_docstring is True
+    manifest = ChangeManifest(tmp_path)
+    assert "sample.py" in manifest.stamps("docs")
+    assert "sample.py" in (manifest.baseline("docs") or {})
 
 
 def test_undocumented_function_gains_docstring(tmp_path: Path) -> None:
@@ -257,7 +265,7 @@ def test_undocumented_function_gains_docstring(tmp_path: Path) -> None:
 
 def test_handles_many_functions_per_file(tmp_path: Path) -> None:
     src = tmp_path / "many.py"
-    src.write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n")
+    src.write_text('"""Module."""\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n')
     generator = FakeGenerator(docstring="doc.")
 
     result = go([src], generator, tmp_path=tmp_path)
@@ -269,9 +277,9 @@ def test_handles_many_functions_per_file(tmp_path: Path) -> None:
 
 
 def test_one_llm_call_per_batch(tmp_path: Path) -> None:
-    """Bundle all 3 fns into a single LLM call (scout-style batching)."""
+    """Bundle all 3 fns into a single LLM call (batched generation)."""
     src = tmp_path / "many.py"
-    src.write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n")
+    src.write_text('"""Module."""\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n')
     gen = FakeGenerator(docstring="d.")
 
     go([src], gen, tmp_path=tmp_path)
@@ -306,6 +314,7 @@ def test_respects_concurrency_limit(tmp_path: Path) -> None:
 
     class TrackingGenerator:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.in_flight = 0
             self.peak = 0
@@ -336,15 +345,14 @@ def test_respects_concurrency_limit(tmp_path: Path) -> None:
     assert gen.peak <= 2
 
 
-def test_skips_cache_hits(tmp_path: Path) -> None:
+def test_unchanged_file_is_skipped_on_rerun(tmp_path: Path) -> None:
     src = tmp_path / "s.py"
     src.write_text("def a():\n    return 1\n")
-    cache = DocsCache(tmp_path)
 
-    go([src], FakeGenerator(docstring="d."), tmp_path=tmp_path, cache=cache)
+    go([src], FakeGenerator(docstring="d."), tmp_path=tmp_path)
 
     gen2 = FakeGenerator()
-    result = go([src], gen2, tmp_path=tmp_path, cache=cache)
+    result = go([src], gen2, tmp_path=tmp_path)
 
     assert gen2.calls == []
     assert result.functions_documented == 0
@@ -353,7 +361,7 @@ def test_skips_cache_hits(tmp_path: Path) -> None:
 def test_writes_each_file_once(tmp_path: Path) -> None:
     """Per-file single libcst pass: each fn inserted in one atomic write."""
     src = tmp_path / "two.py"
-    src.write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n")
+    src.write_text('"""Module."""\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n')
 
     go([src], FakeGenerator(docstring="d."), tmp_path=tmp_path)
 
@@ -413,11 +421,12 @@ def test_partial_generation_persists_completed_batches(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def x():\n    return 1\n")
-    (pkg / "b.py").write_text("def y():\n    return 2\n")
+    (pkg / "a.py").write_text('"""Module."""\n\n\ndef x():\n    return 1\n')
+    (pkg / "b.py").write_text('"""Module."""\n\n\ndef y():\n    return 2\n')
 
     class Halfway:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.calls = 0
 
@@ -453,11 +462,12 @@ def test_resume_skips_completed_batches(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def x():\n    return 1\n")
-    (pkg / "b.py").write_text("def y():\n    return 2\n")
+    (pkg / "a.py").write_text('"""Module."""\n\n\ndef x():\n    return 1\n')
+    (pkg / "b.py").write_text('"""Module."""\n\n\ndef y():\n    return 2\n')
 
     class Halfway:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
 
@@ -527,6 +537,7 @@ def test_switch_handler_resumes_after_transient_exhausted(tmp_path: Path) -> Non
 
     class Exhausted:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise TransientExhausted.after(3, RuntimeError("rate_limit"))
 
@@ -566,6 +577,7 @@ def test_switch_handler_decline_returns_partial(tmp_path: Path) -> None:
 
     class Exhausted:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise TransientExhausted.after(3, RuntimeError("429"))
 
@@ -597,12 +609,13 @@ def test_completed_batches_not_reissued_after_switch(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def x():\n    return 1\n")
-    (pkg / "b.py").write_text("def y():\n    return 2\n")
-    (pkg / "c.py").write_text("def z():\n    return 3\n")
+    (pkg / "a.py").write_text('"""Module."""\n\n\ndef x():\n    return 1\n')
+    (pkg / "b.py").write_text('"""Module."""\n\n\ndef y():\n    return 2\n')
+    (pkg / "c.py").write_text('"""Module."""\n\n\ndef z():\n    return 3\n')
 
     class FirstOkRestExhausted:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.calls = 0
 
@@ -658,8 +671,8 @@ def test_reviewer_reject_skips_that_function_only(tmp_path: Path) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def x():\n    return 1\n")
-    (pkg / "b.py").write_text("def y():\n    return 2\n")
+    (pkg / "a.py").write_text('"""Module."""\n\n\ndef x():\n    return 1\n')
+    (pkg / "b.py").write_text('"""Module."""\n\n\ndef y():\n    return 2\n')
 
     def handler(payload: dict) -> dict:
         ids = _ids(payload)
@@ -715,7 +728,7 @@ def test_reviewer_abort_writes_nothing(tmp_path: Path) -> None:
 
 def test_reviewer_accept_all_writes_everything(tmp_path: Path) -> None:
     src = tmp_path / "m.py"
-    src.write_text("def x():\n    return 1\n\n\ndef y():\n    return 2\n")
+    src.write_text('"""Module."""\n\n\ndef x():\n    return 1\n\n\ndef y():\n    return 2\n')
 
     result = asyncio.run(
         run_docs(
@@ -771,6 +784,7 @@ def test_cancelled_mid_wave_invokes_switch_handler(tmp_path: Path) -> None:
 
     class Cancelling:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             raise asyncio.CancelledError
 
@@ -815,7 +829,7 @@ class TrackingGen:
 def test_rerun_regenerates_with_feedback_then_accepts(tmp_path: Path) -> None:
     """Review queues fn for rerun → generator re-invoked with feedback → second review accepts."""
     src = tmp_path / "m.py"
-    src.write_text("def f():\n    return 1\n")
+    src.write_text('"""Module."""\n\n\ndef f():\n    return 1\n')
 
     gen = TrackingGen(responses=["initial.", "improved."])
     seen: list[bool] = []
@@ -889,6 +903,7 @@ def test_rerun_keeps_accepted_and_regenerates_only_rerun(tmp_path: Path) -> None
 
     class KeyedGen:
         remarks: str | None = None
+
         def __init__(self) -> None:
             self.call = 0
 
@@ -939,7 +954,7 @@ def test_rerun_keeps_accepted_and_regenerates_only_rerun(tmp_path: Path) -> None
 def test_rerun_feedback_accumulates_across_rounds(tmp_path: Path) -> None:
     """Second rerun's prompt receives both feedback strings (oldest first)."""
     src = tmp_path / "m.py"
-    src.write_text("def f():\n    return 1\n")
+    src.write_text('"""Module."""\n\n\ndef f():\n    return 1\n')
 
     gen = TrackingGen(responses=["v1.", "v2.", "v3."])
     round_n = [0]
@@ -1001,10 +1016,8 @@ def test_commit_cleans_journal_and_snapshots_on_success(tmp_path: Path) -> None:
 def test_commit_hash_mismatch_skip_leaves_file_untouched(tmp_path: Path) -> None:
     """A file edited since planning, answered 'skip', is not written."""
     src = tmp_path / "m.py"
-    original = "def x():\n    return 1\n"
-    src.write_text(original)
-    cache = DocsCache(tmp_path)
-    cache.set("m.py", FileDocState(path="m.py", file_hash="STALE", functions={}))
+    src.write_text("def x():\n    return 1\n")
+    edited = "def x():\n    return 2\n"
 
     def handler(payload: dict) -> dict:
         if payload["type"] == "hash_mismatch":
@@ -1014,14 +1027,13 @@ def test_commit_hash_mismatch_skip_leaves_file_untouched(tmp_path: Path) -> None
     result = asyncio.run(
         run_docs(
             [src],
-            FakeGenerator(docstring="d."),
+            DiskMutatingGenerator(src, edited),
             tone="professional",
             repo_root=tmp_path,
             batch_token_limit=10_000,
             concurrency_limit=1,
             provider="anthropic",
             tier="fast",
-            cache=cache,
             auto_confirm=True,
             review_handler=handler,
         )
@@ -1029,15 +1041,14 @@ def test_commit_hash_mismatch_skip_leaves_file_untouched(tmp_path: Path) -> None
 
     assert result.functions_documented == 0
     assert result.skipped_files == 1
-    assert src.read_text() == original
+    assert src.read_text() == edited
 
 
 def test_commit_hash_mismatch_force_writes_file(tmp_path: Path) -> None:
     """Answering 'force' overwrites the concurrently-edited file."""
     src = tmp_path / "m.py"
     src.write_text("def x():\n    return 1\n")
-    cache = DocsCache(tmp_path)
-    cache.set("m.py", FileDocState(path="m.py", file_hash="STALE", functions={}))
+    edited = "def x():\n    return 2\n"
 
     def handler(payload: dict) -> dict:
         if payload["type"] == "hash_mismatch":
@@ -1047,14 +1058,13 @@ def test_commit_hash_mismatch_force_writes_file(tmp_path: Path) -> None:
     result = asyncio.run(
         run_docs(
             [src],
-            FakeGenerator(docstring="d."),
+            DiskMutatingGenerator(src, edited),
             tone="professional",
             repo_root=tmp_path,
             batch_token_limit=10_000,
             concurrency_limit=1,
             provider="anthropic",
             tier="fast",
-            cache=cache,
             auto_confirm=True,
             review_handler=handler,
         )
@@ -1062,15 +1072,14 @@ def test_commit_hash_mismatch_force_writes_file(tmp_path: Path) -> None:
 
     assert result.functions_documented == 1
     assert '"""d."""' in src.read_text()
+    assert "return 2" in src.read_text()
 
 
 def test_commit_hash_mismatch_abort_reports_error(tmp_path: Path) -> None:
     """Answering 'abort' stops the commit and reports an error."""
     src = tmp_path / "m.py"
-    original = "def x():\n    return 1\n"
-    src.write_text(original)
-    cache = DocsCache(tmp_path)
-    cache.set("m.py", FileDocState(path="m.py", file_hash="STALE", functions={}))
+    src.write_text("def x():\n    return 1\n")
+    edited = "def x():\n    return 2\n"
 
     def handler(payload: dict) -> dict:
         if payload["type"] == "hash_mismatch":
@@ -1080,14 +1089,13 @@ def test_commit_hash_mismatch_abort_reports_error(tmp_path: Path) -> None:
     result = asyncio.run(
         run_docs(
             [src],
-            FakeGenerator(docstring="d."),
+            DiskMutatingGenerator(src, edited),
             tone="professional",
             repo_root=tmp_path,
             batch_token_limit=10_000,
             concurrency_limit=1,
             provider="anthropic",
             tier="fast",
-            cache=cache,
             auto_confirm=True,
             review_handler=handler,
         )
@@ -1095,12 +1103,10 @@ def test_commit_hash_mismatch_abort_reports_error(tmp_path: Path) -> None:
 
     assert result.error is not None
     assert result.functions_documented == 0
-    assert src.read_text() == original
+    assert src.read_text() == edited
 
 
-def test_commit_rolls_back_committed_files_on_write_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_commit_rolls_back_committed_files_on_write_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A libcst failure on file N restores files 1..N-1 from their snapshots."""
     import docspatch.pipelines.docs.commit as commit_mod
 
@@ -1127,9 +1133,7 @@ def test_commit_rolls_back_committed_files_on_write_failure(
     assert not list(checkpoints.glob("originals-*"))
 
 
-def test_commit_resumes_at_next_uncommitted_file_after_kill(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_commit_resumes_at_next_uncommitted_file_after_kill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A hard kill mid-commit leaves a journal; the rerun finishes the rest, no LLM re-call."""
     import docspatch.pipelines.docs.commit as commit_mod
 
@@ -1214,6 +1218,7 @@ def test_hanging_call_times_out_and_switch_recovers(tmp_path: Path) -> None:
 
     class HangingGenerator:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             await asyncio.sleep(30)  # never returns within call_timeout
             return {}, FAKE_USAGE
@@ -1252,6 +1257,7 @@ def test_hanging_call_without_switch_raises(tmp_path: Path) -> None:
 
     class HangingGenerator:
         remarks: str | None = None
+
         async def generate_batch(self, items: list[DocstringItem], tone: str) -> tuple[dict[str, str], TokenUsage]:
             await asyncio.sleep(30)
             return {}, FAKE_USAGE
@@ -1274,17 +1280,16 @@ def test_hanging_call_without_switch_raises(tmp_path: Path) -> None:
 
 
 def test_completed_run_rerun_is_zero_llm_calls(tmp_path: Path) -> None:
-    """Cache populated by a clean run → next run on the same files makes no LLM calls."""
+    """A clean run records the manifest → the next run on the same files makes no LLM calls."""
     src = tmp_path / "m.py"
     src.write_text("def foo():\n    return 1\n")
 
-    cache = DocsCache(tmp_path)
     first = FakeGenerator("done.")
-    go([src], first, tmp_path=tmp_path, cache=cache)
+    go([src], first, tmp_path=tmp_path)
     assert first.calls, "first run should have generated"
 
     second = FakeGenerator("done.")
-    go([src], second, tmp_path=tmp_path, cache=cache)
+    go([src], second, tmp_path=tmp_path)
     assert second.calls == []
 
 
@@ -1318,5 +1323,5 @@ def test_resume_twice_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     go([src], b, tmp_path=tmp_path, run_id=run_id)
 
     assert a.calls == []  # resume reused checkpoint
-    assert b.calls == []  # second resume found no incomplete run; cache covered everything
+    assert b.calls == []  # no incomplete run; file already documented on disk
     assert src.read_text() == after_first_resume

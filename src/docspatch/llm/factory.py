@@ -1,7 +1,4 @@
-"""Provider-class construction via a registry. Adding a provider = one entry.
-
-Lazy imports keep optional provider deps off the import path.
-"""
+"""Contains mapping and setup code to construct LangChain chat model classes."""
 
 import importlib
 from collections.abc import Callable
@@ -18,7 +15,14 @@ KwargsMapper = Callable[[str, str, int | None], dict[str, Any]]
 
 
 def _standard_kwargs(model_key: str) -> KwargsMapper:
-    """Build a mapper for providers that take ``api_key`` + ``max_tokens`` verbatim."""
+    """Generate constructor argument mappers for typical LangChain providers.
+
+    Args:
+        model_key: Key identifier for the model argument.
+
+    Returns:
+        Kwargs mapping function.
+    """
 
     def mapper(model: str, api_key: str, max_tokens: int | None) -> dict[str, Any]:
         kwargs: dict[str, Any] = {model_key: model, "api_key": api_key}
@@ -30,7 +34,16 @@ def _standard_kwargs(model_key: str) -> KwargsMapper:
 
 
 def _gemini_kwargs(model: str, api_key: str, max_tokens: int | None) -> dict[str, Any]:
-    """Gemini uses ``google_api_key`` and ``max_output_tokens``."""
+    """Map parameters to Google-specific constructor arguments for Gemini.
+
+    Args:
+        model: Model target name.
+        api_key: API credential key.
+        max_tokens: Token length constraint.
+
+    Returns:
+        Dictionary of provider-specific keywords.
+    """
     kwargs: dict[str, Any] = {"model": model, "google_api_key": api_key}
     if max_tokens is not None:
         kwargs["max_output_tokens"] = max_tokens
@@ -54,17 +67,30 @@ PROVIDERS: dict[Provider, ProviderSpec] = {
 
 
 def load_provider_class(spec: ProviderSpec) -> type[BaseChatModel]:
-    """Import and return the chat model class for ``spec``.
+    """Import and retrieve the chat model class dynamically from its provider module.
 
-    Raises:
-        ImportError: The provider's optional dependency is not installed.
+    Args:
+        spec: Provider specification.
+
+    Returns:
+        Chat model class.
     """
     module = importlib.import_module(spec.module)
     return cast(type[BaseChatModel], getattr(module, spec.class_name))
 
 
 def build_llm(provider: str, api_key: str, tier: str, max_tokens: int | None = None) -> BaseChatModel:
-    """Construct a chat model for ``provider`` at ``tier``."""
+    """Resolve model specifications and construct the ChatModel class.
+
+    Args:
+        provider: Target provider.
+        api_key: Authentication key.
+        tier: Performance tier.
+        max_tokens: Maximum token threshold.
+
+    Returns:
+        Configured chat model instance.
+    """
     p = as_provider(provider)
     spec = PROVIDERS[p]
     model = resolve_tier_model(p, tier)
@@ -73,5 +99,13 @@ def build_llm(provider: str, api_key: str, tier: str, max_tokens: int | None = N
 
 
 def build_validator_llm(provider: str, api_key: str) -> BaseChatModel:
-    """Minimal-token client used only for :meth:`LLMClient.validate_key`."""
+    """Build a lightweight, token-limited model client for rapid authentication checks.
+
+    Args:
+        provider: Target provider.
+        api_key: Access credential key.
+
+    Returns:
+        Fast chat model instance.
+    """
     return build_llm(provider, api_key, "fast", max_tokens=1)

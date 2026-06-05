@@ -1,8 +1,4 @@
-"""Logging setup. ``--debug`` turns on a step-by-step trace of a run.
-
-Without ``--debug`` only warnings and errors reach stderr. With it, every
-step logs at DEBUG so a user can follow the whole flow when reporting a bug.
-"""
+"""Configures the root logging stream format and retrieves child loggers."""
 
 from __future__ import annotations
 
@@ -16,11 +12,10 @@ _DATE_FORMAT = "%H:%M:%S"
 
 
 def configure_logging(debug: bool) -> None:
-    """Configure the ``docspatch`` logger for the current run.
+    """Configure the root docspatch logger to write formatted logs to standard error.
 
     Args:
-        debug: When true, log at DEBUG with a readable per-step trace;
-            otherwise only WARNING and above surface.
+        debug: Enable verbose debug logging levels.
     """
     level = logging.DEBUG if debug else logging.WARNING
     logger = logging.getLogger(LOGGER_NAME)
@@ -35,5 +30,12 @@ def configure_logging(debug: bool) -> None:
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Return a child logger under the ``docspatch`` namespace."""
+    """Retrieve a child logger under the docspatch namespace.
+
+    Args:
+        name: Suffix name of the logger category.
+
+    Returns:
+        Configured Logger instance.
+    """
     return logging.getLogger(f"{LOGGER_NAME}.{name}")

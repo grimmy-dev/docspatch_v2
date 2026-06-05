@@ -1,11 +1,16 @@
-"""Filesystem utilities."""
+"""Atomic file writing and workspace file management helpers."""
 
 import os
 from pathlib import Path
 
 
 def atomic_write(path: Path, content: str | bytes) -> None:
-    """Write ``content`` to ``path`` atomically."""
+    """Write file content safely to a temporary file before replacing the target path.
+
+    Args:
+        path: Destination path of the file to write.
+        content: Raw text string or binary data to save.
+    """
     # Cancellation contract: path is fully written or fully unchanged — write
     # goes to .tmp first, then os.replace (atomic on POSIX + Windows). On any
     # error or interrupt the .tmp is removed and the exception re-raised.

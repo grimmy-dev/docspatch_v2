@@ -6,7 +6,6 @@ from docspatch.source import (
     build_signature,
     compress,
     estimate_tokens,
-    extract_function_metadata,
     extract_module_docstring,
 )
 
@@ -23,12 +22,51 @@ def test_extract_module_docstring_none_on_syntax_error() -> None:
     assert extract_module_docstring("def f(") is None
 
 
-def test_compress_strips_body_and_keeps_docstring() -> None:
-    src = 'def f():\n    """Doc."""\n    return 1\n'
+def test_compress_keeps_function_body() -> None:
+    src = "def f(x):\n    return x * 2\n"
     out = compress(src)
-    assert '"""Doc."""' in out
-    assert "return 1" not in out
-    assert "..." in out
+    assert "return x * 2" in out
+
+
+def test_compress_drops_docstrings() -> None:
+    src = 'def f():\n    """Doc here."""\n    return 1\n'
+    out = compress(src)
+    assert "Doc here." not in out
+    assert "return 1" in out
+
+
+def test_compress_drops_comments() -> None:
+    src = "def f():\n    # inline note\n    return 1  # trailing\n"
+    out = compress(src)
+    assert "note" not in out
+    assert "trailing" not in out
+    assert "return 1" in out
+
+
+def test_compress_drops_blank_lines() -> None:
+    src = "def f():\n    a = 1\n\n\n    return a\n"
+    out = compress(src)
+    assert "\n\n" not in out.strip()
+
+
+def test_compress_reduces_indent_to_one_space() -> None:
+    src = "def f():\n    if True:\n        return 1\n"
+    out = compress(src)
+    assert "\n return 1" not in out  # not a direct child
+    assert "\n  return 1" in out  # two levels deep -> 2 spaces
+
+
+def test_compress_keeps_identifiers_verbatim() -> None:
+    src = "def word_stats(text):\n    frequencies = {}\n    return frequencies\n"
+    out = compress(src)
+    assert "word_stats" in out
+    assert "frequencies" in out
+
+
+def test_compress_preserves_multiline_string_contents() -> None:
+    src = 'def q():\n    sql = """\n    SELECT *\n    FROM t\n    """\n    return sql\n'
+    out = compress(src)
+    assert "    SELECT *\n    FROM t" in out  # literal indentation inside string untouched
 
 
 def test_compress_returns_unparseable_source_unchanged() -> None:
@@ -40,7 +78,7 @@ def test_compress_keeps_module_level_code() -> None:
     src = "X = 1\n\ndef f():\n    return X\n"
     out = compress(src)
     assert "X = 1" in out
-    assert "return X" not in out
+    assert "return X" in out
 
 
 def test_estimate_tokens_is_chars_over_four() -> None:
@@ -57,15 +95,3 @@ def test_build_signature_async_with_star_args() -> None:
     node = ast.parse("async def g(*args, **kwargs): ...").body[0]
     assert isinstance(node, ast.AsyncFunctionDef)
     assert build_signature(node) == "async def g(*args, **kwargs)"
-
-
-def test_extract_function_metadata_keys_by_name() -> None:
-    src = 'def a():\n    """Doc."""\n    return 1\n\ndef b():\n    return 2\n'
-    meta = extract_function_metadata(src)
-    assert set(meta) == {"a", "b"}
-    assert meta["a"].docstring == "Doc."
-    assert meta["b"].docstring is None
-
-
-def test_extract_function_metadata_empty_on_syntax_error() -> None:
-    assert extract_function_metadata("def f(") == {}

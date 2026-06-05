@@ -1,9 +1,4 @@
-"""Central type surface: literals, narrowers, config/git/source schemas.
-
-One module so callers import a single name and the data shapes stay in one
-place. Grouped by domain below: LLM literals, config, git, source, and the
-structured-output pydantic schemas.
-"""
+"""Contains validated settings schemas and type mappings for configuring LLM clients."""
 
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast, get_args
@@ -25,14 +20,34 @@ Tier = Literal["fast", "balanced", "best"]
 
 
 def as_provider(value: str) -> Provider:
-    """Narrow a raw string to the ``Provider`` literal. Raises on unknown."""
+    """Validate and cast a string to a recognized LLM provider literal.
+
+    Args:
+        value: The raw provider identifier string.
+
+    Returns:
+        The cast provider literal.
+
+    Raises:
+        ConfigError: The provider name is unrecognized.
+    """
     if value not in get_args(Provider):
         raise ConfigError.unknown_provider(value)
     return cast(Provider, value)
 
 
 def as_tier(value: str) -> Tier:
-    """Narrow a raw string to the ``Tier`` literal. Raises on unknown."""
+    """Validate and cast a string to a recognized model performance tier.
+
+    Args:
+        value: The raw tier string.
+
+    Returns:
+        The cast tier literal.
+
+    Raises:
+        ConfigError: The tier name is unrecognized.
+    """
     if value not in get_args(Tier):
         raise ConfigError.unknown_tier(value)
     return cast(Tier, value)
@@ -52,13 +67,13 @@ class ScopedValue[T]:
 
 
 def _default(key: str) -> ScopedValue[Any]:
-    """Retrieve the default configuration for a specific key.
+    """Resolve the default configuration value from global settings.
 
     Args:
-        key: The configuration key to lookup.
+        key: The configuration key to query.
 
     Returns:
-        A scoped value object with the default setting.
+        A scoped value containing the default value.
     """
     return ScopedValue(CONFIG_DEFAULTS[key], "default")
 
@@ -68,7 +83,7 @@ class DocspatchConfig:
     provider: ScopedValue[str | None] = field(default_factory=lambda: _default("provider"))
     api_key: ScopedValue[str | None] = field(default_factory=lambda: _default("api_key"))
     generator_model: ScopedValue[str | None] = field(default_factory=lambda: _default("generator_model"))
-    scout_model: ScopedValue[str | None] = field(default_factory=lambda: _default("scout_model"))
+    analysis_model: ScopedValue[str | None] = field(default_factory=lambda: _default("analysis_model"))
     tone: ScopedValue[str | None] = field(default_factory=lambda: _default("tone"))
     batch_token_limit: ScopedValue[int] = field(default_factory=lambda: _default("batch_token_limit"))
     concurrency_limit: ScopedValue[int] = field(default_factory=lambda: _default("concurrency_limit"))
@@ -90,7 +105,14 @@ class RunSettings:
 
     @classmethod
     def from_config(cls, config: DocspatchConfig) -> RunSettings:
-        """Resolve the run parameters from ``config``, applying defaults."""
+        """Construct run settings from a config object, applying environment-specific fallbacks.
+
+        Args:
+            config: The loaded application configuration.
+
+        Returns:
+            A structured settings object initialized with resolved run options.
+        """
         return cls(
             batch_token_limit=int(config.batch_token_limit.value or DEFAULT_BATCH_TOKEN_LIMIT),
             concurrency_limit=int(config.concurrency_limit.value or DEFAULT_CONCURRENCY_LIMIT),
@@ -111,46 +133,51 @@ class FunctionMetadata:
     line_end: int = 0
 
 
-@dataclass
-class FileSummary:
-    path: str
-    summary: str
-    functions: list[FunctionMetadata] = field(default_factory=list)
-    content_hash: str = ""
-    # size + mtime_ns power constant-time fast-skip before any read/parse.
-    size: int = 0
-    mtime_ns: int = 0
-
-
 # ---- LLM structured-output schemas -----------------------------------------
 
 
-class FileSummaryOutput(BaseModel):
-    """Module summary plus one-line description per function."""
+class ReadmeOutput(BaseModel):
+    """A whole README rendered as a single markdown document."""
 
-    summary: str = Field(description="One decent paragraph overview of the module's purpose and functionality.")
-    function_summaries: dict[str, str] = Field(
-        default_factory=dict,
-        description="Keyed by function name. Value = one concrete descriptive on what the function does.",
+    markdown: str = Field(description="The complete README in GitHub-flavoured markdown. No code fences around the whole document.")
+
+
+class ArgDoc(BaseModel):
+    """One parameter line under a docstring's ``Args:`` section."""
+
+    name: str = Field(description="Parameter name exactly as it appears in the signature.")
+    description: str = Field(description="What the parameter is, in one line.")
+
+
+class RaiseDoc(BaseModel):
+    """One exception line under a docstring's ``Raises:`` section."""
+
+    exception: str = Field(description="Exception type the caller may see.")
+    when: str = Field(description="Condition that triggers it.")
+
+
+class DocstringSpec(BaseModel):
+    """Structured docstring fields. The renderer turns these into Google-style text.
+
+    Every section but ``description`` is optional: a void function leaves
+    ``returns`` null, a function that raises nothing leaves ``raises`` empty.
+    The renderer emits a section only when it is populated, so trivial functions
+    get a one-line docstring and nothing more.
+    """
+
+    description: str = Field(description="One line stating what it does, imperative mood, ending with a period.")
+    args: list[ArgDoc] = Field(
+        default_factory=list,
+        description="One entry per parameter worth explaining; omit self/cls and self-evident ones.",
     )
-
-
-class BatchSummaryOutput(BaseModel):
-    """Summaries for a batch of modules, keyed by the path passed in the prompt."""
-
-    files: dict[str, FileSummaryOutput] = Field(
-        default_factory=dict,
-        description="Mapping keyed by file path exactly as given in the `Expected paths` list.",
-    )
+    returns: str | None = Field(default=None, description="What it returns. Null for functions that return None.")
+    raises: list[RaiseDoc] = Field(default_factory=list, description="Exceptions a caller should anticipate; empty when none.")
 
 
 class BatchDocstringOutput(BaseModel):
-    """Docstrings for a batch of functions, keyed by ``<rel>::<qualname>`` exactly as given in the prompt."""
+    """Docstring specs for a batch of targets, keyed by ``<rel>::<qualname>`` exactly as given in the prompt."""
 
-    docstrings: dict[str, str] = Field(
+    docstrings: dict[str, DocstringSpec] = Field(
         default_factory=dict,
-        description=(
-            "Mapping keyed by `<rel>::<qualname>` ids from the `Expected ids` list. "
-            "Value = Google-style docstring body, no triple quotes."
-        ),
+        description="Mapping keyed by `<rel>::<qualname>` ids from the `Expected ids` list.",
     )

@@ -1,19 +1,14 @@
-"""Token cost estimation. Separates input and output dollar math.
-
-Earlier code multiplied ``(input_price + output_price)`` by input-token count,
-treating output cost as if it scaled with input tokens — that overstates cost
-2-5× depending on provider. This module projects output tokens as a fraction
-of input and prices each side independently.
-"""
+"""Declares token estimation and actual pricing models to calculate run costs."""
 
 from dataclasses import dataclass
 
 from docspatch.llm.catalogue import tier_info
 from docspatch.utils.errors import ConfigError
 
-# Scout summaries measure ~15% of compressed input across Python files.
-# Callers override per-pipeline (docs/readme generate more).
-DEFAULT_OUTPUT_RATIO = 0.15
+# Output-token fraction of input, per pipeline — measured, independently tunable.
+# Docs: full function source in, moderate docstrings out.
+DOCS_OUTPUT_RATIO = 0.5
+DEFAULT_OUTPUT_RATIO = 0.6
 
 
 @dataclass(frozen=True)
@@ -25,10 +20,10 @@ class CostEstimate:
 
     @property
     def total(self) -> float:
-        """Calculate the cumulative cost of the estimate.
+        """Calculate the total combined cost of input and output tokens.
 
         Returns:
-            The sum of input and output costs.
+            Total cost.
         """
         return self.input_cost + self.output_cost
 
@@ -39,16 +34,19 @@ def estimate_cost(
     input_tokens: int,
     output_ratio: float = DEFAULT_OUTPUT_RATIO,
 ) -> CostEstimate:
-    """Estimate dollar cost for a pipeline run.
+    """Predict the dollar cost of a run using an expected output-to-input token ratio.
 
     Args:
-        provider: One of ``anthropic``, ``openai``, ``gemini``.
-        tier: One of ``fast``, ``balanced``, ``best``.
-        input_tokens: Total input tokens for the run.
-        output_ratio: Projected output tokens as a fraction of input. Must be ≥ 0.
+        provider: LLM provider name.
+        tier: Performance tier.
+        input_tokens: Total input tokens.
+        output_ratio: Estimated output token fraction.
+
+    Returns:
+        Cost estimate object.
 
     Raises:
-        ConfigError: On unknown provider/tier or negative inputs.
+        ConfigError: Inputs are invalid or configurations are unknown.
     """
     if input_tokens < 0:
         raise ConfigError.must_be_non_negative("input_tokens", input_tokens)
@@ -63,9 +61,16 @@ def estimate_cost(
 
 
 def actual_cost(provider: str, tier: str, input_tokens: int, output_tokens: int) -> CostEstimate:
-    """Dollar cost from measured input *and* output tokens — no projection.
+    """Compute the exact cost of an executed model call using physical token usage counts.
 
-    Used by the end-of-run summary, where both token counts are known for real.
+    Args:
+        provider: Target LLM provider.
+        tier: Model quality tier.
+        input_tokens: Measured input tokens.
+        output_tokens: Measured output tokens.
+
+    Returns:
+        Cost estimate object.
     """
     if input_tokens < 0 or output_tokens < 0:
         raise ConfigError.must_be_non_negative("tokens", min(input_tokens, output_tokens))

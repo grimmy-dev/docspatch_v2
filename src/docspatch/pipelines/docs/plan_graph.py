@@ -1,8 +1,4 @@
-"""Plan graph: scan files, batch targets, estimate cost, confirm with the user.
-
-Runs once per invocation and is not checkpointed — planning is cheap and must
-re-scan the working tree each time.
-"""
+"""LangGraph state machine definitions and nodes for tracking and executing the documentation planning phases."""
 
 from collections import defaultdict
 
@@ -13,12 +9,20 @@ from docspatch.llm.pricing import estimate_cost
 from docspatch.pipelines.docs.context import GraphContext
 from docspatch.pipelines.docs.planner import collect_targets
 from docspatch.pipelines.docs.state import BatchRef, CostBreakdown, PlanState, TargetRef
+from docspatch.source import file_hash
 from docspatch.ui import console, cost_panel, status, warning_panel
 from docspatch.utils.batcher import greedy_batches
 
 
 def build_plan_graph(ctx: GraphContext):  # noqa: ANN201
-    """Plan → batch → estimate → confirm → END."""
+    """Assemble the LangGraph state machine for planning, batching, estimating, and confirming docstring updates.
+
+    Args:
+        ctx: Shared context containing model configuration and the target registry.
+
+    Returns:
+        A compiled state graph executable.
+    """
     g: StateGraph = StateGraph(PlanState)
     g.add_node("plan", make_plan(ctx))
     g.add_node("batch", make_batch(ctx))
@@ -34,7 +38,16 @@ def build_plan_graph(ctx: GraphContext):  # noqa: ANN201
 
 
 def batch_targets(ctx: GraphContext, targets: list[TargetRef], offset: int = 0) -> list[BatchRef]:
-    """Greedy-batch targets by token cost; batch ids start at ``offset``."""
+    """Partition identified targets into token-bound chunks using greedy knapsack bin-packing.
+
+    Args:
+        ctx: Context providing token limits and target detail lookups.
+        targets: List of references to functions and modules waiting for generation.
+        offset: Starting index number for batch identification.
+
+    Returns:
+        List of structured batches with unique index IDs.
+    """
     if not targets:
         return []
 
@@ -46,14 +59,23 @@ def batch_targets(ctx: GraphContext, targets: list[TargetRef], offset: int = 0) 
 
 
 def make_plan(ctx: GraphContext):  # noqa: ANN201
-    """Scan files; populate target refs + the cached full-target lookup."""
+    """Produce a graph node function that scans paths for undocumented code and caches existing docstring states.
+
+    Args:
+        ctx: Context holding the baseline cache stamps and target mapping registry.
+
+    Returns:
+        A state graph node function that updates PlanState with targets.
+    """
 
     def plan(state: PlanState) -> PlanState:
         with status("Scanning files..."):
-            result = collect_targets(
-                state["paths"], state["repo_root"], cache=ctx.cache, update=state["flags"].update
-            )
+            result = collect_targets(state["paths"], state["repo_root"], ctx.prev_stamps, update=state["flags"].update)
         ctx.full_targets = {(t.rel, t.qualname): t for t in result.targets}
+        # Snapshot each target file's hash now, so commit can tell whether the
+        # file changed on disk between planning and writing.
+        root = state["repo_root"].resolve()
+        ctx.plan_hashes = {rel: file_hash((root / rel).read_text()) for rel in {t.rel for t in result.targets}}
         refs = [TargetRef(rel=t.rel, qualname=t.qualname) for t in result.targets]
         return {"targets": refs, "cache_hits": result.cache_hits}
 
@@ -61,7 +83,14 @@ def make_plan(ctx: GraphContext):  # noqa: ANN201
 
 
 def make_batch(ctx: GraphContext):  # noqa: ANN201
-    """Greedy batch refs by token cost."""
+    """Produce a graph node function that aggregates targets into size-bounded batches.
+
+    Args:
+        ctx: Context providing token limits and target information.
+
+    Returns:
+        A state graph node function that updates PlanState with batch list.
+    """
 
     def batch(state: PlanState) -> PlanState:
         return {"batches": batch_targets(ctx, state["targets"])}
@@ -70,7 +99,14 @@ def make_batch(ctx: GraphContext):  # noqa: ANN201
 
 
 def make_estimate(ctx: GraphContext):  # noqa: ANN201
-    """Render cost panel grouped by file."""
+    """Produce a graph node function that estimates token usage and project dollar cost of the run.
+
+    Args:
+        ctx: Context containing LLM pricing data and tier configurations.
+
+    Returns:
+        A state graph node function that prints a cost summary and records the estimate.
+    """
 
     def estimate(state: PlanState) -> PlanState:
         targets = state["targets"]
@@ -115,7 +151,14 @@ def make_estimate(ctx: GraphContext):  # noqa: ANN201
 
 
 def make_confirm(ctx: GraphContext):  # noqa: ANN201
-    """User confirm gate. Skips when ``confirmed`` already set (resume)."""
+    """Produce a graph node function that prompts the user to approve the planned generation.
+
+    Args:
+        ctx: Context containing the prompter and auto-confirm bypass flags.
+
+    Returns:
+        A state graph node function that blocks on confirmation and writes approval to state.
+    """
 
     def confirm(state: PlanState) -> PlanState:
         if state.get("confirmed"):

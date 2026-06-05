@@ -1,4 +1,4 @@
-"""Tier × model × price catalogue. Single source of truth for what each provider offers."""
+"""Declares pricing data and mapping utilities for Anthropic, OpenAI, and Gemini models."""
 
 from dataclasses import dataclass
 
@@ -27,15 +27,26 @@ TIER_CATALOGUE: dict[Provider, list[TierInfo]] = {
         TierInfo("best", "gpt-5.5", 5.00, 30.00, "🏆"),
     ],
     "gemini": [
-        TierInfo("fast", "gemini-3.1-flash-lite", 0.25, 1.50, "⚡"),
-        TierInfo("balanced", "gemini-3-flash-preview", 0.50, 3.00, "⚖️"),
-        TierInfo("best", "gemini-3.1-pro-preview", 2.00, 12.00, "🏆"),
+        TierInfo("fast", "gemini-3.1-flash-lite", 0.125, 0.75, "⚡"),
+        TierInfo("balanced", "gemini-3.5-flash", 1.50, 9.00, "⚖️"),
+        TierInfo("best", "gemini-2.5-pro", 1.25, 10.00, "🏆"),
     ],
 }
 
 
 def tier_info(provider: str, tier: str) -> TierInfo:
-    """Look up a :class:`TierInfo` or raise :class:`ConfigError` on unknown pair."""
+    """Retrieve model pricing, identifier, and UI icon for a specific provider tier.
+
+    Args:
+        provider: Target LLM provider.
+        tier: Target performance tier.
+
+    Returns:
+        Tier information object.
+
+    Raises:
+        ConfigError: The pairing is unrecognized.
+    """
     p, t = as_provider(provider), as_tier(tier)
     for entry in TIER_CATALOGUE[p]:
         if entry.tier == t:
@@ -44,15 +55,30 @@ def tier_info(provider: str, tier: str) -> TierInfo:
 
 
 def resolve_tier_model(provider: str, tier: str) -> str:
-    """Return the model string for ``(provider, tier)``."""
+    """Map a provider and tier combination to its active LLM model string.
+
+    Args:
+        provider: Target provider.
+        tier: Target tier.
+
+    Returns:
+        Model identifier string.
+    """
     return tier_info(provider, tier).model
 
 
 def tier_for_model(provider: str, model: str) -> Tier:
-    """Reverse-lookup the tier that owns ``model`` under ``provider``.
+    """Resolve the quality tier name from a provider's model string.
+
+    Args:
+        provider: Target provider.
+        model: Target model identifier.
+
+    Returns:
+        Tier name.
 
     Raises:
-        ConfigError: When ``model`` is not in the catalogue for ``provider``.
+        ConfigError: The model is unknown.
     """
     p = as_provider(provider)
     for entry in TIER_CATALOGUE[p]:

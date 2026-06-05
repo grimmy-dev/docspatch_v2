@@ -1,66 +1,30 @@
-"""Typed, retry-aware async runnable returned by ``LLMClient.with_structured_output``.
-
-Two retry mechanisms, kept distinct:
-- Transient errors (rate limit / 5xx / timeout) → the shared ``RateLimitGate``.
-- Schema-validation failure → one corrective re-prompt here, then ``ParseFailed``.
-
-Real token usage is captured with a per-call ``UsageMetadataCallbackHandler``;
-a fresh handler per call keeps usage isolated under concurrent batches.
-"""
-
-from dataclasses import dataclass
+"""Supplies the main execution harness for retrying model operations and collecting usage data."""
 
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import Runnable
 from pydantic import ValidationError
 
+from docspatch.llm.usage import TokenUsage
 from docspatch.utils.errors import LLMError, ParseFailed, TransientExhausted
-from docspatch.utils.retry import RateLimitGate, RetryPolicy
+from docspatch.utils.retry import LLM_RETRY, RateLimitGate
 
-LLM_RETRY = RetryPolicy(max_attempts=5, base_delay=60.0, max_delay=300.0)
 TRANSIENT_MARKERS = ("rate_limit", "429", "503", "502", "timeout", "overloaded")
 
-PARSE_RETRY_SUFFIX = (
-    "\n\nReturn valid JSON matching the schema exactly. Previous response failed validation."
-)
+PARSE_RETRY_SUFFIX = "\n\nReturn valid JSON matching the schema exactly. Previous response failed validation."
 _PARSE_ERRORS = (OutputParserException, ValidationError)
 """Schema-validation failures: json mode raises the first, tool-calling the second."""
 
 
-@dataclass(frozen=True)
-class TokenUsage:
-    """Real input/output token counts reported by a provider for one or more calls."""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-    @property
-    def total(self) -> int:
-        """Calculate the aggregate number of tokens.
-
-        Returns:
-            The total count of input and output tokens.
-        """
-        return self.input_tokens + self.output_tokens
-
-    def __add__(self, other: TokenUsage) -> TokenUsage:
-        """Sum two token usage instances.
-
-        Args:
-            other: Another instance of token usage to add.
-
-        Returns:
-            A new TokenUsage instance representing the combined count.
-        """
-        return TokenUsage(
-            self.input_tokens + other.input_tokens,
-            self.output_tokens + other.output_tokens,
-        )
-
-
 def _collected_usage(handler: UsageMetadataCallbackHandler) -> TokenUsage:
-    """Sum the per-model usage a callback handler collected during one call."""
+    """Aggregate total tokens tracked across all models queried in a callback handler.
+
+    Args:
+        handler: Langchain callback recording token usage metadata.
+
+    Returns:
+        Total token usage.
+    """
     total = TokenUsage()
     for meta in handler.usage_metadata.values():
         total += TokenUsage(int(meta.get("input_tokens", 0)), int(meta.get("output_tokens", 0)))
@@ -68,13 +32,27 @@ def _collected_usage(handler: UsageMetadataCallbackHandler) -> TokenUsage:
 
 
 def is_transient(exc: Exception) -> bool:
-    """True if ``exc`` looks like a retryable provider/rate error."""
+    """Determine if an exception represents a retryable rate limit or timeout error.
+
+    Args:
+        exc: The caught exception.
+
+    Returns:
+        True if error is transient.
+    """
     msg = str(exc).lower()
     return any(marker in msg for marker in TRANSIENT_MARKERS)
 
 
 def wrap_llm_error(exc: Exception) -> LLMError:
-    """Map a raw provider error to ``TransientExhausted`` or ``LLMError``."""
+    """Convert provider exceptions into TransientExhausted or generic LLMError wrappers.
+
+    Args:
+        exc: The raw exception caught from the LLM provider.
+
+    Returns:
+        An instance of TransientExhausted or LLMError.
+    """
     if is_transient(exc):
         return TransientExhausted.after(LLM_RETRY.max_attempts, exc)
     return LLMError.api_failure(exc)
@@ -84,7 +62,7 @@ class TypedRunnable[T]:
     """Wraps a LangChain structured chain with the gate + parse-retry policy."""
 
     def __init__(self, chain: Runnable[str, T], gate: RateLimitGate) -> None:
-        """Initialize the runnable with a chain and a rate limit gate.
+        """Store the LangChain runnable chain and rate limiter on the wrapper instance.
 
         Args:
             chain: The base runnable chain.
@@ -94,10 +72,16 @@ class TypedRunnable[T]:
         self.gate = gate
 
     async def ainvoke(self, prompt: str) -> tuple[T, TokenUsage]:
-        """Invoke the chain, retrying a schema-validation failure exactly once.
+        """Invoke the chain asynchronously and trigger a single schema-validation retry on failure.
 
-        Returns the parsed value and the real token usage of every call made
-        (a retry is billed too). A second parse failure raises ``ParseFailed``.
+        Args:
+            prompt: The input text for the LLM chain.
+
+        Returns:
+            The parsed value and the accumulated token usage.
+
+        Raises:
+            ParseFailed: A second schema-validation error occurs after retry.
         """
         # One handler shared across both attempts so a parse-retry still bills the
         # discarded first call. Provider tokens are committed regardless of whether
@@ -113,7 +97,18 @@ class TypedRunnable[T]:
         return value, _collected_usage(handler)
 
     async def _call(self, prompt: str, handler: UsageMetadataCallbackHandler) -> T:
-        """One gated call recording usage into ``handler``. Parse errors propagate raw."""
+        """Invoke the chain through a rate-limiting gate while recording token usage metadata.
+
+        Args:
+            prompt: The input text for the LLM chain.
+            handler: The usage tracking callback handler.
+
+        Returns:
+            The result of the invocation.
+
+        Raises:
+            LLMError: The provider reports an API failure.
+        """
         try:
             return await self.gate.execute(
                 lambda: self.chain.ainvoke(prompt, config={"callbacks": [handler]}),

@@ -9,6 +9,7 @@ from docspatch.ui.prompter import ScriptedPrompter
 from docspatch.ui.review_panel import (
     ITEM_ACCEPT,
     ITEM_BACK,
+    ITEM_EDIT,
     ITEM_REJECT,
     ITEM_RERUN,
     MAX_CODE_LINES,
@@ -21,7 +22,7 @@ from docspatch.ui.review_panel import (
     build_breadcrumb,
     build_code,
     build_explorer,
-    build_previews,
+    build_file_previews,
     item_menu,
     render_review_panel,
     review_session,
@@ -51,18 +52,18 @@ def test_build_previews_handles_module_docstring(tmp_path: Path) -> None:
     src = tmp_path / "mod.py"
     src.write_text("import os\n\n\ndef f():\n    return os\n")
 
-    previews = build_previews(
-        [ReviewEntry(rel="mod.py", qualname="<module>", docstring="Module doc.")], tmp_path
-    )
+    entry = ReviewEntry(rel="mod.py", qualname="<module>", docstring="Module doc.")
+    previews = build_file_previews(tmp_path, "mod.py", [entry])
 
     preview = previews[("mod.py", "<module>")]
     assert '"""Module doc."""' in preview.code
     assert preview.start_line == 1
+    assert preview.doc_lines == (1, 1)
 
 
 def test_empty_entries_returns_empty_choice(tmp_path: Path) -> None:
     choice = review_session([], repo_root=tmp_path, prompter=ScriptedPrompter([]), allow_rerun=True)
-    assert choice == {"accepted": [], "rejected": [], "rerun": [], "feedback": {}, "aborted": False}
+    assert choice == {"accepted": [], "rejected": [], "rerun": [], "feedback": {}, "edited": {}, "aborted": False}
 
 
 def test_accept_all_accepts_every_entry(tmp_path: Path) -> None:
@@ -96,6 +97,25 @@ def test_rerun_queues_entry_and_collects_feedback(tmp_path: Path) -> None:
     assert choice["accepted"] == ["mod.py::bar"]
 
 
+def test_edit_records_changed_docstring_and_accepts(tmp_path: Path) -> None:
+    choice = run(tmp_path, [TOP_REVIEW, ITEM_EDIT, "Hand-edited doc.", ITEM_ACCEPT])
+    assert choice["accepted"] == ["mod.py::foo", "mod.py::bar"]
+    assert choice["edited"] == {"mod.py::foo": "Hand-edited doc."}
+
+
+def test_edit_unchanged_is_not_recorded_but_still_accepts(tmp_path: Path) -> None:
+    # Editing but keeping the same text accepts without logging an edit.
+    choice = run(tmp_path, [TOP_REVIEW, ITEM_EDIT, "Foo doc.", ITEM_ACCEPT])
+    assert choice["accepted"] == ["mod.py::foo", "mod.py::bar"]
+    assert choice["edited"] == {}
+
+
+def test_edit_absent_from_parse_failed_menu() -> None:
+    failed = ReviewEntry(rel="m.py", qualname="f", docstring="", parse_failed=True)
+    assert "Edit" not in item_menu(failed, allow_rerun=True)
+    assert "Edit" in item_menu(ReviewEntry(rel="m.py", qualname="g", docstring="doc"), allow_rerun=True)
+
+
 def test_allow_rerun_false_hides_rerun_choice(tmp_path: Path) -> None:
     seen: list[dict[str, str]] = []
 
@@ -120,18 +140,20 @@ def test_preview_includes_docstring_and_signature_only(tmp_path: Path) -> None:
     src = tmp_path / "mod.py"
     src.write_text("def foo():\n    return 1\n\n\ndef bar():\n    return 2\n")
     entries = [ReviewEntry(rel="mod.py", qualname="foo", docstring="Preview marker.")]
-    preview = build_previews(entries, tmp_path)[("mod.py", "foo")]
+    preview = build_file_previews(tmp_path, "mod.py", entries)[("mod.py", "foo")]
     assert "Preview marker." in preview.code
     assert "def foo" in preview.code
     assert "return 1" not in preview.code
     assert preview.start_line == 1
+    # docstring inserted on the line after the signature
+    assert preview.doc_lines == (2, 2)
 
 
 def test_preview_handles_class_method(tmp_path: Path) -> None:
     src = tmp_path / "mod.py"
     src.write_text("class C:\n    def m(self):\n        return 1\n")
     entries = [ReviewEntry(rel="mod.py", qualname="C.m", docstring="Method doc.")]
-    preview = build_previews(entries, tmp_path)[("mod.py", "C.m")]
+    preview = build_file_previews(tmp_path, "mod.py", entries)[("mod.py", "C.m")]
     assert "Method doc." in preview.code
     assert "def m" in preview.code
     assert "return 1" not in preview.code
@@ -213,9 +235,7 @@ def test_accept_all_rejects_parse_failed_entry(tmp_path: Path) -> None:
     entries = [
         {"rel": "mod.py", "qualname": "foo", "docstring": "", "parse_failed": True, "raw_output": "not json"},
     ]
-    choice = review_session(
-        entries, repo_root=tmp_path, prompter=ScriptedPrompter([TOP_ACCEPT_ALL]), allow_rerun=True
-    )
+    choice = review_session(entries, repo_root=tmp_path, prompter=ScriptedPrompter([TOP_ACCEPT_ALL]), allow_rerun=True)
     assert choice["accepted"] == []
     assert choice["rejected"] == ["mod.py::foo"]
 
@@ -226,7 +246,7 @@ def test_renders_at_extreme_terminal_widths(tmp_path: Path) -> None:
     src.write_text("def foo():\n    return 1\n")
     entry = ReviewEntry(rel="mod.py", qualname="foo", docstring="Foo doc.")
     ctx = RenderCtx(idx=1, total=2, accepted_count=0, rejected_count=0)
-    preview = build_previews([entry], tmp_path)[("mod.py", "foo")]
+    preview = build_file_previews(tmp_path, "mod.py", [entry])[("mod.py", "foo")]
 
     for width in (20, 200):
         panel = render_review_panel(
@@ -285,13 +305,11 @@ def test_build_code_truncates_long_body() -> None:
     body = "def foo():\n" + "\n".join(f"    x{i} = {i}" for i in range(120))
     syntax = build_code(preview=Preview(code=body, start_line=1))
     out = render_str(syntax, width=80)
-    assert "more body lines" in out
+    assert "more lines" in out
 
 
 def test_build_code_keeps_signature_and_docstring_visible() -> None:
-    body = 'def foo():\n    """The docstring under review."""\n' + "\n".join(
-        f"    x{i} = {i}" for i in range(120)
-    )
+    body = 'def foo():\n    """The docstring under review."""\n' + "\n".join(f"    x{i} = {i}" for i in range(120))
     out = render_str(build_code(preview=Preview(code=body, start_line=1)), width=80)
     assert "def foo" in out
     assert "docstring under review" in out
@@ -300,17 +318,35 @@ def test_build_code_keeps_signature_and_docstring_visible() -> None:
 def test_build_code_no_footer_when_short() -> None:
     short = "def foo():\n    return 1\n"
     out = render_str(build_code(preview=Preview(code=short, start_line=1)), width=80)
-    assert "more body lines" not in out
+    assert "more lines" not in out
 
 
 def test_build_code_respects_max_lines_override() -> None:
     body = "\n".join(f"line{i}" for i in range(20))
     out = render_str(build_code(preview=Preview(code=body, start_line=1), max_lines=5), width=80)
-    assert "more body lines" in out
+    assert "more lines" in out
 
 
 def test_max_code_lines_is_50() -> None:
     assert MAX_CODE_LINES == 50
+
+
+def test_build_code_shows_added_docstring_as_diff() -> None:
+    # before = bare signature, after = signature + docstring → docstring is added.
+    preview = Preview(code='def foo():\n    """New doc."""', start_line=1, before="def foo():")
+    out = render_str(build_code(preview=preview), width=80)
+    assert "+" in out and "New doc." in out
+
+
+def test_build_file_previews_capture_unpatched_baseline(tmp_path: Path) -> None:
+    src = tmp_path / "mod.py"
+    src.write_text("def foo():\n    return 1\n")
+    entry = ReviewEntry(rel="mod.py", qualname="foo", docstring="Fresh doc.")
+    preview = build_file_previews(tmp_path, "mod.py", [entry])[("mod.py", "foo")]
+    # Baseline holds the signature without a docstring; the patched slice adds it.
+    assert "Fresh doc." not in preview.before
+    assert "def foo" in preview.before
+    assert "Fresh doc." in preview.code
 
 
 def test_parse_failed_panel_shows_raw_output() -> None:
