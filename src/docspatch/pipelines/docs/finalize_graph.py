@@ -211,10 +211,10 @@ def rerun_batches(ctx: GraphContext, rerun_ids: list[str]) -> list[BatchRef]:
         A list of target batches optimized for API limits.
     """
     refs = [
-        TargetRef(rel=rel, qualname=qualname)
+        ref
         for rid in rerun_ids
         for rel, _, qualname in [rid.partition("::")]
-        if (rel, qualname) in ctx.full_targets
+        if (ref := TargetRef(rel=rel, qualname=qualname)) in ctx.registry
     ]
     return batch_targets(ctx, refs)
 

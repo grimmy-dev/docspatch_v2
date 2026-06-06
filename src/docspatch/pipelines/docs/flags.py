@@ -96,8 +96,80 @@ def resolve_remarks(*, is_resume: bool, prior: str | None, requested: str | None
 # ---- --check preview -------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class PreviewRow:
+    """Per-file line of a ``--check`` preview."""
+
+    rel: str
+    functions: int
+    input_tokens: int
+    cost: float
+
+
+@dataclass(frozen=True)
+class PreviewReport:
+    """Undocumented targets grouped by file with estimated tokens and cost.
+
+    Pure value — holds no console. ``rows`` is empty when nothing needs docs.
+    """
+
+    rows: list[PreviewRow]
+    model: str
+    tier: str
+
+    @property
+    def any_targets(self) -> bool:
+        """Return whether any file has undocumented targets."""
+        return bool(self.rows)
+
+    @property
+    def total_functions(self) -> int:
+        """Return the total undocumented function count across files."""
+        return sum(r.functions for r in self.rows)
+
+    @property
+    def total_tokens(self) -> int:
+        """Return the projected total input tokens across files."""
+        return sum(r.input_tokens for r in self.rows)
+
+    @property
+    def total_cost(self) -> float:
+        """Return the projected total cost across files."""
+        return sum(r.cost for r in self.rows)
+
+
+def analyze_targets(files: list[Path], repo_root: Path, prev_stamps: dict[str, tuple[int, int]], provider: str, tier: str) -> PreviewReport:
+    """Estimate the docstring work for undocumented targets, grouped and costed by file.
+
+    Args:
+        files: Paths to Python source files to check.
+        repo_root: The base directory of the repository.
+        prev_stamps: Stored file modification timestamps used to find changes.
+        provider: The name of the LLM provider.
+        tier: The performance and cost tier of the model.
+
+    Returns:
+        A preview report; ``rows`` is empty when nothing needs docs.
+    """
+    # Deferred: planner pulls libcst via the source module — keep `flags` light
+    # so importing it for RunFlags/validation never pays that cost.
+    from docspatch.pipelines.docs.planner import Target, collect_targets
+
+    found = collect_targets(files, repo_root, prev_stamps).targets
+    by_file: dict[str, list[Target]] = defaultdict(list)
+    for target in found:
+        by_file[target.rel].append(target)
+
+    rows: list[PreviewRow] = []
+    for rel in sorted(by_file):
+        items = by_file[rel]
+        est = estimate_cost(provider, tier, sum(t.token_cost for t in items), output_ratio=DOCS_OUTPUT_RATIO)
+        rows.append(PreviewRow(rel=rel, functions=len(items), input_tokens=est.input_tokens, cost=est.total))
+    return PreviewReport(rows=rows, model=tier_info(provider, tier).model, tier=tier)
+
+
 def preview_check(files: list[Path], repo_root: Path, prev_stamps: dict[str, tuple[int, int]], provider: str, tier: str) -> bool:
-    """Analyze undocumented Python targets and print a preview of expected changes, token usage, and costs.
+    """Print a preview of undocumented targets, token usage, and cost.
 
     Args:
         files: Paths to Python source files to check.
@@ -109,33 +181,16 @@ def preview_check(files: list[Path], repo_root: Path, prev_stamps: dict[str, tup
     Returns:
         True if any targets require documentation, False otherwise.
     """
-    # Deferred: planner pulls libcst via the source module — keep `flags` light
-    # so importing it for RunFlags/validation never pays that cost.
-    from docspatch.pipelines.docs.planner import Target, collect_targets
-
-    found = collect_targets(files, repo_root, prev_stamps).targets
-    if not found:
+    report = analyze_targets(files, repo_root, prev_stamps, provider, tier)
+    if not report.any_targets:
         console.print("[green]✓[/green] All Python files documented.")
         return False
 
-    by_file: dict[str, list[Target]] = defaultdict(list)
-    for target in found:
-        by_file[target.rel].append(target)
+    rows = [[r.rel, str(r.functions), f"~{r.input_tokens:,}", f"${r.cost:.4f}"] for r in report.rows]
+    rows.append(["TOTAL", str(report.total_functions), f"~{report.total_tokens:,}", f"${report.total_cost:.4f}"])
 
-    rows: list[list[str]] = []
-    total_fns = total_tokens = 0
-    total_cost = 0.0
-    for rel in sorted(by_file):
-        items = by_file[rel]
-        est = estimate_cost(provider, tier, sum(t.token_cost for t in items), output_ratio=DOCS_OUTPUT_RATIO)
-        rows.append([rel, str(len(items)), f"~{est.input_tokens:,}", f"${est.total:.4f}"])
-        total_fns += len(items)
-        total_tokens += est.input_tokens
-        total_cost += est.total
-    rows.append(["TOTAL", str(total_fns), f"~{total_tokens:,}", f"${total_cost:.4f}"])
-
-    console.print(f"[bold]{tier_info(provider, tier).model}[/bold] · {tier} tier")
+    console.print(f"[bold]{report.model}[/bold] · {report.tier} tier")
     console.print(build_table(["FILE", "UNDOCUMENTED", "INPUT TOKENS", "COST"], rows))
-    console.print(f"[yellow]{total_fns} function(s) across {len(by_file)} file(s) need docstrings.[/yellow]")
+    console.print(f"[yellow]{report.total_functions} function(s) across {len(report.rows)} file(s) need docstrings.[/yellow]")
     console.print("[dim]Run [/dim]dp docs[dim] to document them.[/dim]")
     return True

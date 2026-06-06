@@ -13,17 +13,13 @@ from docspatch.pipelines.readme.prompts import TOOL_DEFS
 from docspatch.pipelines.readme.state import PreContext, ReadmeResult, ReadmeState
 from docspatch.ui import Prompter, console, cost_rows, render_summary, status
 from docspatch.ui.readme_review import review_readme
+from docspatch.utils.entry_points import entry_point_commands, entry_point_targets
 from docspatch.utils.fs import atomic_write
 from docspatch.utils.ignore import load_docsignore
 from docspatch.utils.logging import get_logger
-from docspatch.utils.project import (
-    entry_point_commands,
-    entry_point_targets,
-    get_dir_tree,
-    project_dependencies,
-    project_facts,
-)
+from docspatch.utils.project_metadata import project_dependencies, project_facts
 from docspatch.utils.scope import discover_targets
+from docspatch.utils.tree import get_dir_tree
 
 if TYPE_CHECKING:
     from docspatch.llm import LLMClient

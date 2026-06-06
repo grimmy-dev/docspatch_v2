@@ -224,7 +224,7 @@ def _conflict(ctx, rel: str, source: str) -> bool:  # noqa: ANN001
     Returns:
         True when the current source differs from the plan-time hash.
     """
-    planned = ctx.plan_hashes.get(rel)
+    planned = ctx.registry.plan_hash(rel)
     return planned is not None and planned != file_hash(source)
 
 

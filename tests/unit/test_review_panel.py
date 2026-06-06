@@ -5,6 +5,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from docspatch.ui.preview import Preview, ReviewEntry, build_file_previews
 from docspatch.ui.prompter import ScriptedPrompter
 from docspatch.ui.review_panel import (
     ITEM_ACCEPT,
@@ -16,13 +17,10 @@ from docspatch.ui.review_panel import (
     TOP_ABORT,
     TOP_ACCEPT_ALL,
     TOP_REVIEW,
-    Preview,
     RenderCtx,
-    ReviewEntry,
     build_breadcrumb,
     build_code,
     build_explorer,
-    build_file_previews,
     item_menu,
     render_review_panel,
     review_session,

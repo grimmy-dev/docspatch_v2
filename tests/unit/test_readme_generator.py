@@ -6,7 +6,7 @@ from docspatch.llm import TokenUsage
 from docspatch.pipelines.readme.generator import LLMReadmeGenerator
 from docspatch.pipelines.readme.state import PreContext
 from docspatch.schemas import ReadmeOutput
-from docspatch.utils.project import ProjectFacts
+from docspatch.utils.project_metadata import ProjectFacts
 
 
 def make_pre() -> PreContext:

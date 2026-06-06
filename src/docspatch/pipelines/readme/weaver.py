@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from docspatch.pipelines.readme.prompts import render_backbone, render_surface
 from docspatch.pipelines.readme.state import PreContext, Surface
-from docspatch.utils.project import is_entry_point_path
+from docspatch.utils.entry_points import is_entry_point_path
 
 
 def body_key(path: str, function_name: str) -> str:

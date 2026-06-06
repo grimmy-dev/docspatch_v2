@@ -9,7 +9,7 @@ from docspatch.pipelines.readme.prompts import (
     scope_label,
 )
 from docspatch.pipelines.readme.state import PreContext, Surface, SurfaceEntry
-from docspatch.utils.project import ProjectFacts
+from docspatch.utils.project_metadata import ProjectFacts
 
 
 def make_pre(scope: str = ".") -> PreContext:

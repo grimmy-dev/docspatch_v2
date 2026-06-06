@@ -16,7 +16,7 @@ from docspatch.utils.git import GitReader
 from docspatch.utils.licenses import available as available_licenses
 from docspatch.utils.licenses import insert_copyright
 from docspatch.utils.licenses import text as license_text
-from docspatch.utils.project import get_pyproject_field
+from docspatch.utils.project_metadata import get_pyproject_field
 from docspatch.utils.secrets import display_value
 
 
@@ -196,7 +196,7 @@ def select_license(repo_root: Path, p: Prompter, *, reconfigure: bool = False) -
     """
     license_file = repo_root / "LICENSE"
     pyproject = repo_root / "pyproject.toml"
-    has_field = pyproject.exists() and get_pyproject_field(pyproject, "license") is not None
+    has_field = pyproject.exists() and get_pyproject_field(repo_root, "license") is not None
 
     if not reconfigure and license_file.exists() and has_field:
         console.print("[dim]license: already set (LICENSE file present)[/dim]")
@@ -220,7 +220,7 @@ def select_license(repo_root: Path, p: Prompter, *, reconfigure: bool = False) -
         console.print(f"[green]✓[/green] LICENSE ({selected}) written")
     if pyproject.exists() and not has_field:
         update_pyproject_license(pyproject, selected)
-        if get_pyproject_field(pyproject, "authors") is None:
+        if get_pyproject_field(repo_root, "authors") is None:
             console.print("[dim]Tip: add an `authors` entry under [project] in pyproject.toml.[/dim]")
 
 

@@ -7,7 +7,7 @@ from typing import Literal, TypedDict
 from pydantic import BaseModel, Field
 
 from docspatch.llm import TokenUsage
-from docspatch.utils.project import ProjectFacts
+from docspatch.utils.project_metadata import ProjectFacts
 
 # ---- code-built context ----------------------------------------------------
 
