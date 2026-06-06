@@ -23,22 +23,29 @@ class TargetRegistry:
     plan_hashes: dict[str, str]
 
     @classmethod
-    def from_targets(cls, root: Path, targets: list[Target]) -> TargetRegistry:
+    def from_targets(
+        cls, root: Path, targets: list[Target], file_hashes: dict[str, str] | None = None
+    ) -> TargetRegistry:
         """Build the registry from planned targets, snapshotting each file's hash.
 
         The hash captured here lets the commit step detect a file that changed
-        on disk between planning and writing.
+        on disk between planning and writing. The planner already read each file,
+        so it passes ``file_hashes`` to avoid a second read; absent that, the
+        files are read here.
 
         Args:
             root: Resolved repository root.
             targets: Targets discovered by the planner.
+            file_hashes: Plan-time raw hashes keyed by repo-relative path. Read
+                from disk when omitted.
 
         Returns:
             A registry mapping target keys to bodies and files to plan-time hashes.
         """
         by_key = {(t.rel, t.qualname): t for t in targets}
-        hashes = {rel: file_hash((root / rel).read_text()) for rel in {t.rel for t in targets}}
-        return cls(targets=by_key, plan_hashes=hashes)
+        if file_hashes is None:
+            file_hashes = {rel: file_hash((root / rel).read_text()) for rel in {t.rel for t in targets}}
+        return cls(targets=by_key, plan_hashes=dict(file_hashes))
 
     def token_cost(self, ref: TargetRef) -> int:
         """Return the planned token cost of one target.

@@ -68,7 +68,7 @@ def make_plan(ctx: GraphContext):  # noqa: ANN201
     def plan(state: PlanState) -> PlanState:
         with status("Scanning files..."):
             result = collect_targets(state["paths"], state["repo_root"], ctx.prev_stamps, update=state["flags"].update)
-        ctx.registry = TargetRegistry.from_targets(state["repo_root"].resolve(), result.targets)
+        ctx.registry = TargetRegistry.from_targets(state["repo_root"].resolve(), result.targets, result.file_hashes)
         refs = [TargetRef(rel=t.rel, qualname=t.qualname) for t in result.targets]
         return {"targets": refs, "cache_hits": result.cache_hits}
 
@@ -132,8 +132,6 @@ def make_estimate(ctx: GraphContext):  # noqa: ANN201
                     ("Files", str(breakdown.files)),
                     ("Functions", str(breakdown.functions)),
                     ("Input tokens", f"~{est.input_tokens:,}"),
-                    ("Output tokens", f"~{est.output_tokens:,} (projected)"),
-                    ("Cost", f"~${est.total:.4f}  (in ${est.input_cost:.4f} + out ${est.output_cost:.4f})"),
                 ],
                 per_file=breakdown.per_file,
             )

@@ -9,6 +9,7 @@ from docspatch.commands import cleanup, config, docs, init, readme
 from docspatch.ui.console import err_console
 from docspatch.utils.errors import EXIT_INTERNAL, DocspatchError
 from docspatch.utils.logging import configure_logging, get_logger
+from docspatch.utils.timing import clock
 
 log = get_logger("cli")
 
@@ -39,6 +40,7 @@ def invoke_command(fn: Callable[..., None], debug: bool, name: str = "command") 
     """
     configure_logging(debug)
     log.debug("running command: %s", name)
+    clock.start()
     try:
         fn()
     except DocspatchError as e:

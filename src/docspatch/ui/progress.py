@@ -4,9 +4,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskID, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskID, TextColumn
 
-from docspatch.ui.console import console
+from docspatch.ui.console import CommandClockColumn, console
 
 
 @dataclass
@@ -59,7 +59,7 @@ def progress_bar(total: int, description: str = "Working") -> Iterator[BarHandle
         TextColumn("[bold]{task.description}"),
         BarColumn(),
         TextColumn("{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
+        CommandClockColumn(),
     )
     with Progress(*columns, console=console, transient=True) as progress:
         task_id = progress.add_task(description, total=total)

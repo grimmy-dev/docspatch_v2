@@ -24,6 +24,7 @@ from docspatch.pipelines.docs.state import (
 from docspatch.pipelines.fanout import load_state
 from docspatch.source import MODULE_QUALNAME
 from docspatch.ui import status
+from docspatch.utils.timing import clock
 
 
 async def drive_finalize(
@@ -71,7 +72,8 @@ async def drive_finalize(
             break
         if handler is None:
             raise RuntimeError("graph raised an interrupt but no review handler was supplied")
-        choice = await asyncio.to_thread(handler, interrupts[0].value)
+        with clock.paused():
+            choice = await asyncio.to_thread(handler, interrupts[0].value)
         next_input = Command(resume=choice)
 
     final = await load_state(saver, config)

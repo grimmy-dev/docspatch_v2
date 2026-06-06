@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from docspatch.source import compress, file_hash
+from docspatch.source import ast_structural_hash
 from docspatch.utils.errors import CacheError
 from docspatch.utils.fs import atomic_write
 
@@ -24,7 +24,7 @@ def semantic_hash(source: str) -> str:
     Returns:
         The hexadecimal semantic hash.
     """
-    return file_hash(compress(source))
+    return ast_structural_hash(source)
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,7 @@ class ChangeManifest:
             repo_root: The repository root.
         """
         self.path = repo_root.resolve() / ".docspatch" / MANIFEST_NAME
+        self._data: dict[str, dict] | None = None
 
     def baseline(self, pipeline: str) -> dict[str, str] | None:
         """Retrieve the mapped baseline hashes from the last successful run of a specific pipeline.
@@ -154,7 +155,7 @@ class ChangeManifest:
         Raises:
             CacheError: Writing the manifest fails.
         """
-        data = self._load()
+        data = dict(self._load())
         record: dict = {"uuid": uuid.uuid4().hex, "hashes": dict(current)}
         if stamps:
             record["stamps"] = {p: [size, mtime] for p, (size, mtime) in stamps.items()}
@@ -163,6 +164,7 @@ class ChangeManifest:
             atomic_write(self.path, gzip.compress(json.dumps(data).encode()))
         except OSError as exc:
             raise CacheError.write_failed(str(self.path), exc) from exc
+        self._data = data
 
     def _load(self) -> dict[str, dict]:
         """Read and decompress the manifest file from disk, returning empty data if it is missing or corrupted.
@@ -173,10 +175,13 @@ class ChangeManifest:
         Raises:
             CacheError: Reading the manifest fails due to OSError.
         """
+        if self._data is not None:
+            return self._data
         try:
             raw = self.path.read_bytes()
         except FileNotFoundError:
-            return {}
+            self._data = {}
+            return self._data
         except OSError as exc:
             raise CacheError.read_failed(str(self.path), exc) from exc
         try:
@@ -186,5 +191,7 @@ class ChangeManifest:
             # every pipeline as a first-ever run, rebuilt on the next success.
             self.path.unlink(missing_ok=True)
             _ = exc
-            return {}
-        return data if isinstance(data, dict) else {}
+            self._data = {}
+            return self._data
+        self._data = data if isinstance(data, dict) else {}
+        return self._data

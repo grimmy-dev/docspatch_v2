@@ -23,6 +23,9 @@ def body_key(path: str, function_name: str) -> str:
 def relevance_tier(path: str, entry_point_modules: frozenset[str]) -> int:
     """Assign a sorting priority to a file path based on its project role.
 
+    Entry-point files lead; everything else follows. Ranking stays on the
+    derived entry-point signal so it holds for any project, not just this one.
+
     Args:
         path: The repo-relative source path.
         entry_point_modules: A set of entry point modules.
@@ -30,11 +33,7 @@ def relevance_tier(path: str, entry_point_modules: frozenset[str]) -> int:
     Returns:
         An integer rank defining priority.
     """
-    if is_entry_point_path(path, set(entry_point_modules)):
-        return 0
-    if path.startswith("pipelines/") or "/pipelines/" in path:
-        return 1
-    return 2
+    return 0 if is_entry_point_path(path, set(entry_point_modules)) else 1
 
 
 def weave(pre: PreContext, synthesis: str | None, surfaces: dict[str, Surface], bodies: dict[str, str]) -> str:

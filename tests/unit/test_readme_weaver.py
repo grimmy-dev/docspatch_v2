@@ -16,11 +16,11 @@ def make_pre(modules: frozenset[str] = frozenset()) -> PreContext:
     )
 
 
-def test_relevance_tier_orders_entry_pipeline_rest() -> None:
+def test_relevance_tier_entry_points_lead_rest_follow() -> None:
     mods = frozenset({"pkg.cli"})
     assert relevance_tier("pkg/cli.py", mods) == 0
     assert relevance_tier("pipelines/readme/graph.py", mods) == 1
-    assert relevance_tier("utils/fs.py", mods) == 2
+    assert relevance_tier("utils/fs.py", mods) == 1
 
 
 def test_weave_orders_entry_point_surface_first() -> None:

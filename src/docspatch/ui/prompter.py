@@ -318,7 +318,10 @@ async def aprompt[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T
     Returns:
         The value returned by the prompt function.
     """
-    return await asyncio.to_thread(fn, *args, **kwargs)
+    from docspatch.utils.timing import clock
+
+    with clock.paused():
+        return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 def _to_questionary_choices(choices: Choices) -> list[str | questionary.Choice]:

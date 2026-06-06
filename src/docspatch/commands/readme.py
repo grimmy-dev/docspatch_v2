@@ -13,6 +13,7 @@ from docspatch.utils.lockfile import run_lock
 from docspatch.utils.logging import get_logger
 from docspatch.utils.scope import ensure_exists, ensure_inside_repo, ensure_relative
 from docspatch.utils.session import client_for, load_session, verify_connection
+from docspatch.utils.timing import run_within_budget
 
 log = get_logger("readme")
 
@@ -159,16 +160,19 @@ def run(flags: ReadmeFlags, prompter: Prompter | None = None) -> None:
         generator = LLMReadmeGenerator(client_for(session))
         log.debug("starting readme generation")
         result = asyncio.run(
-            generate_readme(
-                repo_root,
-                scope,
-                out_path,
-                analysis_client=client_for(session, "fast"),
-                generator=generator,
-                prompter=p,
-                remarks=remarks,
-                provider=session.provider,
-                tier=session.tier,
+            run_within_budget(
+                generate_readme(
+                    repo_root,
+                    scope,
+                    out_path,
+                    analysis_client=client_for(session, "fast"),
+                    generator=generator,
+                    prompter=p,
+                    remarks=remarks,
+                    provider=session.provider,
+                    tier=session.tier,
+                    auto_confirm=flags.check,
+                )
             )
         )
     log.debug("readme finished: written=%s", result.written)
