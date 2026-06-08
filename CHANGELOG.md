@@ -7,9 +7,32 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `dp readme` command and README pipeline: a LangGraph agent scopes a directory,
+  maps its source with a fast analysis model, then drafts or refreshes a
+  `README.md` for side-by-side review before writing.
+- Shared `ChangeManifest` backing both pipelines — semantic-hash change
+  detection with a stat-stamp fast-skip, keyed per pipeline.
 - `DocstringGenerator` protocol so the docs pipeline depends on a generator
   interface rather than the concrete `LLMDocstringGenerator`.
 - `py.typed` marker — the package now ships its type information to consumers.
+- Persistent run timer: a single elapsed counter ticks for the whole `docs` and
+  `readme` run, stepping aside only for interactive prompts.
+- Status message while the docs review reruns docstrings, so the regeneration
+  step is no longer silent.
+- PyPI publishing metadata — SPDX license, classifiers, keywords, and project
+  URLs.
+
+### Changed
+- Shared `confirm_or_skip` helper backs the docs and readme pre-run prompts, so
+  both gate model calls the same way.
+- Docs run summary formats elapsed time with `format_duration`, matching the
+  readme summary and the live timer.
+
+### Removed
+- `mypy` moved from runtime dependencies to the dev group — it was never
+  imported at runtime and shipping it added ~50 MB to every install.
+- Dead, test-only helpers: `GitReader.is_repo` / `last_commit_touching` /
+  `commits_since` and the `BatchPlan` count properties.
 
 ### Fixed
 - `ConfigError` construction routed through named factory methods

@@ -11,8 +11,8 @@ from docspatch.manifest import ChangeManifest, ChangeSet
 from docspatch.pipelines.readme.generator import ReadmeGenerator
 from docspatch.pipelines.readme.prompts import TOOL_DEFS
 from docspatch.pipelines.readme.state import PreContext, ReadmeResult, ReadmeState
-from docspatch.ui import Prompter, console, cost_rows, kv_panel, render_summary, status, timed_status
-from docspatch.ui.prompter import is_interactive
+from docspatch.ui import Prompter, confirm_or_skip, console, cost_rows, kv_panel, render_summary, status, timed_status
+from docspatch.ui.prompter import aprompt, is_interactive
 from docspatch.ui.readme_review import review_readme
 from docspatch.utils.entry_points import entry_point_commands, entry_point_targets
 from docspatch.utils.fs import atomic_write
@@ -151,9 +151,12 @@ def _confirm_generation(prompter: Prompter, scope: str, state: ScopeState, *, au
         True to proceed with generation.
     """
     console.print(kv_panel("README run", _run_facts(scope, state)))
-    if auto_confirm or not is_interactive():
-        return True
-    return prompter.confirm("Generate README now?")
+    return confirm_or_skip(
+        prompter,
+        "Generate README now?",
+        bypass=auto_confirm or not is_interactive(),
+        cancel="[dim]README cancelled — nothing written.[/dim]",
+    )
 
 
 def _initial_state(pre: PreContext, existing: str | None) -> ReadmeState:
@@ -225,8 +228,7 @@ async def generate_readme(
         console.print("[green]✓[/green] README is fresh — nothing scoped changed.")
         return ReadmeResult(written=False, out_path=None, usage=TokenUsage())
 
-    if not _confirm_generation(prompter, scope, state, auto_confirm=auto_confirm):
-        console.print("[dim]README cancelled — nothing written.[/dim]")
+    if not await aprompt(_confirm_generation, prompter, scope, state, auto_confirm=auto_confirm):
         return ReadmeResult(written=False, out_path=None, usage=TokenUsage())
 
     pre = build_pre_context(root, scope, state)

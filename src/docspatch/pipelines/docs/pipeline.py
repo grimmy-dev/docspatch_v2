@@ -30,6 +30,7 @@ from docspatch.ui import Prompter, cache_hit_row, console, cost_rows, progress_b
 from docspatch.ui.retry_display import RetryDisplay
 from docspatch.utils.logging import get_logger
 from docspatch.utils.secrets import scrub
+from docspatch.utils.timing import format_duration
 
 log = get_logger("docs.pipeline")
 
@@ -74,7 +75,7 @@ def _render_docs_summary(
         rows = [
             ("Model", f"{model} ({provider})"),
             *cost_rows(usage, provider, tier, sunk=True),
-            ("Elapsed", f"{elapsed:.1f}s"),
+            ("Elapsed", format_duration(elapsed)),
         ]
         render_summary("Docs run aborted — nothing written", rows, border_style="yellow")
         return
@@ -86,7 +87,7 @@ def _render_docs_summary(
         ("Skipped files", str(len(outcome.skipped))),
         cache_hit_row(cache_hits, scanned),
         *cost_rows(usage, provider, tier),
-        ("Elapsed", f"{elapsed:.1f}s"),
+        ("Elapsed", format_duration(elapsed)),
     ]
     render_summary("Docs run complete", rows, border_style="green")
 

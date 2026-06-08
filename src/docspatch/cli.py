@@ -6,7 +6,7 @@ from pathlib import Path
 import typer
 
 from docspatch.commands import cleanup, config, docs, init, readme
-from docspatch.ui.console import err_console
+from docspatch.ui.console import command_timer, err_console
 from docspatch.utils.errors import EXIT_INTERNAL, DocspatchError
 from docspatch.utils.logging import configure_logging, get_logger
 from docspatch.utils.timing import clock
@@ -30,19 +30,21 @@ RECONFIGURE_OPTION = typer.Option(
 )
 
 
-def invoke_command(fn: Callable[..., None], debug: bool, name: str = "command") -> None:
+def invoke_command(fn: Callable[..., None], debug: bool, name: str = "command", *, timer: bool = False) -> None:
     """Execute a command while handling logging and exceptions centrally.
 
     Args:
         fn: Function to run.
         debug: Enable verbose tracing.
         name: Command label.
+        timer: Show a persistent elapsed counter for the run's duration.
     """
     configure_logging(debug)
     log.debug("running command: %s", name)
     clock.start()
+    run = (lambda: _with_timer(fn)) if timer else fn
     try:
-        fn()
+        run()
     except DocspatchError as e:
         log.debug("command %s failed: %s", name, e.code)
         err_console.print(e.render(debug=debug))
@@ -61,6 +63,12 @@ def invoke_command(fn: Callable[..., None], debug: bool, name: str = "command") 
         err_console.print("[yellow]Hint:[/yellow] re-run with --debug for the full traceback.")
         raise typer.Exit(EXIT_INTERNAL) from None
     log.debug("command %s finished", name)
+
+
+def _with_timer(fn: Callable[..., None]) -> None:
+    """Run ``fn`` under the persistent command timer."""
+    with command_timer():
+        fn()
 
 
 @app.command("init")
@@ -103,7 +111,7 @@ def docs_cmd(
         resume=resume,
         no_ignore=no_ignore,
     )
-    invoke_command(lambda: docs.run(flags), debug, "docs")
+    invoke_command(lambda: docs.run(flags), debug, "docs", timer=True)
 
 
 @app.command("readme")
@@ -124,7 +132,7 @@ def readme_cmd(
         debug: Enable verbose tracing.
     """
     flags = readme.ReadmeFlags(path=path, update=update, check=check, remarks=remarks)
-    invoke_command(lambda: readme.run(flags), debug, "readme")
+    invoke_command(lambda: readme.run(flags), debug, "readme", timer=True)
 
 
 @app.command("cleanup")

@@ -1,136 +1,137 @@
 # docspatch
 
-docspatch automates Python docstring and README generation. It parses code structures with AST-aware analysis and injects documented changes directly into source files using `libcst`, preserving your existing formatting, imports, and indentation.
+AI-powered documentation for Python projects. `docspatch` writes Google-style docstrings and directory-scoped `README.md` files, then edits them into your source without disturbing the surrounding code.
 
-By tracking semantic changes instead of line-by-line diffs, docspatch limits LLM processing to code that has actually undergone logical modifications.
+It works against the *meaning* of your code, not its text. Each file is reduced to a structural hash that ignores blank lines, comments, and existing docstrings, so a reformatted file is never re-sent to the model — only code whose logic actually changed is processed. Docstrings are inserted through `libcst`, preserving your formatting, imports, and indentation exactly.
 
-## Getting Started
+## Features
 
-### Requirements
+- **Docstrings** — generate Google-style docstrings for undocumented functions, methods, classes, and modules, inserted in place.
+- **READMEs** — draft or refresh a `README.md` scoped to any directory, reviewed side-by-side before anything is written.
+- **Semantic change tracking** — a content-hash manifest skips files that are unchanged since the last run.
+- **Interactive review** — accept, reject, edit, or rerun each generated item.
+- **Resumable** — interrupted runs checkpoint to SQLite and continue with `--resume`.
+- **Three providers** — Anthropic, OpenAI, and Google Gemini, each with `fast`, `balanced`, and `best` model tiers.
+- **Cost-aware** — every run reports token usage and actual dollar cost.
 
-- Python >= 3.14
-- An API key for your chosen LLM provider (Anthropic, OpenAI, or Google Gemini)
+## Requirements
 
-### Installation
+- Python ≥ 3.14
+- An API key for one provider: Anthropic, OpenAI, or Google Gemini
 
-The project uses [uv](https://docs.astral.sh/uv/) for package management. Sync the environment to install dependencies:
+## Installation
 
-```bash
-uv sync
-```
+`docspatch` installs a single `dp` command.
 
-This installs core dependencies including `libcst>=1.8.6`, `typer>=0.15`, `rich>=13`, `langgraph>=1.2.0`, `langgraph-checkpoint-sqlite>=3.1.0`, `langchain-anthropic>=1.4.3`, `langchain-openai>=1.2.1`, and `langchain-google-genai>=4.2.2`.
-
-### Initialization
-
-Set up your local configuration and scan your project structure to create a baseline:
-
-```bash
-uv run dp init
-```
-
-This command invokes `init_cmd` to guide you through selecting your preferred provider and model tier, writing configurations to the local `.docspatch/` directory or your global configuration path.
-
-## Usage
-
-### Generating Docstrings
-
-The `dp docs` command scans Python modules, extracts existing structures, and generates Google-style docstrings for undocumented functions, classes, and modules. It uses a content-hash change manifest to ensure only modified functions are processed.
-
-To analyze and document files inside the `src/` directory, run:
+From source with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv run dp docs src/
+uv sync          # create the environment and install dependencies
+uv run dp --help
 ```
 
-To identify undocumented functions and display updates in the terminal review panel without writing them to disk, append the `--check` flag:
+Once published, install it as a standalone tool:
 
 ```bash
-uv run dp docs src/ --check
+uv tool install docspatch   # or: pipx install docspatch
 ```
 
-To force-overwrite existing docstrings and recover an interrupted run, combine `--update` and `--resume`:
+## Quick Start
 
 ```bash
-uv run dp docs src/ --update --resume
+dp init                 # choose a provider, tier, and tone; store an API key
+dp docs src/            # document everything undocumented under src/
+dp readme               # draft or refresh the root README
 ```
+
+## Commands
+
+### `dp init`
+
+Walks you through provider, model tier, and tone, then writes configuration to the repo (`.docspatch/config.toml`) or your global path (`~/.docspatch/`). API keys are stored masked.
+
+### `dp docs [PATHS]`
+
+Scans the given files or directories (the whole repo when omitted), generates docstrings for anything undocumented, and edits them into place after review.
 
 | Flag | Description |
 | :--- | :--- |
-| `--check` | Validates missing documentation and shows pending changes without editing files. |
-| `--update` | Overwrites existing docstrings instead of skipping documented items. |
-| `--remarks TEXT` | Appends custom instructions (e.g., "Use highly technical terminology") to the LLM context. |
-| `--resume` | Recovers the execution state of an interrupted run from the SQLite ledger. |
-| `--no-ignore` | Forces docspatch to scan files otherwise bypassed by your `.gitignore` or `.docsignore` patterns. |
-
-### Maintaining READMEs
-
-The `dp readme` command creates or updates a `README.md` targeted at a directory level. It measures the semantic drift of the source files in that directory since the last documentation generation to determine if the README is stale.
-
-To analyze the entire project and draft or refresh the root `README.md`, run:
+| `--check` | List undocumented functions and the estimated cost; write nothing. |
+| `--update` | Regenerate every docstring in scope, including already-documented ones. |
+| `--remarks TEXT` | Extra instruction added to every docstring prompt. |
+| `--resume` | Continue the most recent interrupted run. |
+| `--no-ignore` | Scan files normally excluded by `.gitignore` / `.docsignore`. |
 
 ```bash
-uv run dp readme
+dp docs src/                      # document a subtree
+dp docs src/ --check              # preview only, exit non-zero if work remains
+dp docs src/ --update --resume    # full rewrite, resuming if interrupted
 ```
 
-To verify whether a package-specific README is out of sync with its source files without calling the LLM, target the subdirectory and pass `--check`:
+### `dp readme [PATH]`
 
-```bash
-uv run dp readme src/docspatch/commands/ --check
-```
+Creates or updates a `README.md` for a directory. It compares the directory's source against the last run to decide whether the README is stale, maps the code with a fast analysis model, drafts the document, and shows a diff for approval.
 
 | Flag | Description |
 | :--- | :--- |
-| `--update` | Re-drafts the README from scratch rather than updating sections in place. |
-| `--check` | Reports whether the README is stale relative to the source code without calling the LLM. |
-| `--remarks TEXT` | Adds explicit layout or contextual instructions to the markdown generator. |
-
-## How it Works
-
-docspatch divides tasks into two separate execution pipelines powered by LangGraph agents:
-
-1. **Docs Pipeline (`run_docs`)**: This pipeline identifies target functions, determines missing documentation, and processes batches of changes. Instead of naive text replacement, docspatch compiles code to concrete syntax trees with `libcst` to inject `DocstringSpec` values directly into target scopes using `insert_docstrings`. Changes are tracked with a `ChangeManifest` that stores structural SHA-256 hashes of the code body (ignoring blank lines, comments, and docstrings) computed via `semantic_hash` and the `Squeezer` AST transformer.
-2. **README Pipeline (`generate_readme`)**: This pipeline scopes target files with `scope_state` and checks staleness with `is_fresh`. It builds a `PreContext` containing structural facts, entry points, and dependencies via `build_pre_context`. An analysis client model first runs through the target scope to map logic flows. A generator model then weaves this analysis into target markdown segments. The result is displayed in a side-by-side terminal comparison using Rich, allowing you to accept or reject changes via `review_readme` before they are committed to disk.
-
-### Checkpoints and Ledger
-
-Interrupted runs do not lose their progress. The `docspatch` pipeline utilizes an asynchronous checkpoint store (`AsyncSqliteSaver` inside `docs_db_path(repo_root)`) to serialize run states. When you run a command with `--resume`, the pipeline retrieves the incomplete graph state, validates outstanding targets, and proceeds with the execution using saved metadata and remarks. Active API token usage is tracked inside a local SQLite ledger via `TokenLedger` to report actual model costs at the end of every run.
-
-## Configuration
-
-Configurations are resolved by `load_config` which merges defaults with your global configuration (stored at `~/.docspatch/config.toml`) and local repository configuration keys (stored at `.docspatch/config.toml`). You can view or change settings using the `dp config` interface.
-
-To set the active provider to Anthropic and choose a technical tone, execute:
+| `--update` | Re-draft from scratch instead of refreshing sections in place. |
+| `--check` | Report whether the README is stale without calling the model. |
+| `--remarks TEXT` | Extra layout or content instruction for the draft. |
 
 ```bash
-uv run dp config set provider anthropic
-uv run dp config set tone technical
+dp readme                                   # root README
+dp readme src/docspatch/commands/ --check   # is this package's README stale?
+```
+
+### `dp config`
+
+Show the merged configuration, or set a key:
+
+```bash
+dp config                              # print resolved settings
+dp config set provider anthropic
+dp config set tone technical
 ```
 
 | Key | Purpose |
 | :--- | :--- |
-| `provider` | The active LLM provider (`anthropic`, `openai`, or `gemini`). |
-| `generator_model` | The model assigned to draft docstrings and compose markdown (e.g., `claude-3-5-sonnet`). |
-| `analysis_model` | A fast-tier, cost-efficient model used to summarize source files and map dependencies. |
-| `tone` | The stylistic tone used across documentation (e.g., `professional`, `technical`). |
-| `batch_token_limit` | The maximum token limit allocated per batched LLM payload. |
-| `concurrency_limit` | The maximum number of concurrent LLM API requests. |
-| `call_timeout` | Timeout threshold in seconds for LLM API calls. |
+| `provider` | Active provider: `anthropic`, `openai`, or `gemini`. |
+| `generator_model` | Model that drafts docstrings and README prose. |
+| `analysis_model` | Fast, cheaper model that maps source files. |
+| `tone` | Stylistic tone, e.g. `professional` or `technical`. |
+| `batch_token_limit` | Maximum tokens per batched model request. |
+| `concurrency_limit` | Maximum concurrent model requests. |
+| `call_timeout` | Per-request timeout in seconds. |
+
+### `dp cleanup`
+
+Removes local cache files, run logs, and the SQLite checkpoint ledger.
+
+## How It Works
+
+`docspatch` runs two LangGraph pipelines over a shared change manifest.
+
+**Docs pipeline.** Finds undocumented targets, packs them into token-bounded batches, and generates docstrings concurrently. Output is compiled to a concrete syntax tree with `libcst` and inserted into the exact scope, so nothing else in the file moves. Anti-LLM-ese and transient-failure retries run automatically, and the model can be switched mid-run when a provider is exhausted.
+
+**README pipeline.** Scopes a directory, resolves its structure and entry points into a context backbone, maps the code with a fast model, then weaves a draft with the generator model. The result is reviewed as a red/green diff before it is committed.
+
+**Change manifest.** Both pipelines key their state by pipeline name in one `ChangeManifest`. Files are compared by a structural hash (`semantic_hash` over a `Squeezer`-normalised tree), with a size/mtime stamp as a fast-skip so unchanged files are not even re-hashed.
+
+**Checkpoints and ledger.** Runs serialize to an async SQLite store, so `--resume` picks up outstanding work with its saved state and remarks. Token usage is recorded to a per-run ledger and reported as real cost at the end.
+
+**Run feedback.** Every `docs` and `readme` run shows one live elapsed timer that keeps ticking across steps while output scrolls above it. The docs run reports batch progress (`Generating docstrings 3/10`) and regeneration on that same line, stepping aside only while an interactive prompt owns the terminal.
+
+## Configuration
+
+Settings resolve in layers: built-in defaults, then your global config (`~/.docspatch/config.toml`), then the repo config (`.docspatch/config.toml`). Later layers win. View or edit them with `dp config`.
 
 ## Development
 
-Set up a local environment with `uv` and execute linting and tests directly:
-
 ```bash
-uv run pytest          # Run unit, integration, and pipeline tests
-uv run ruff check      # Scan for style guide violations
-uv run mypy src        # Perform static type checking on the source tree
-```
-
-You can wipe local cache files, transaction logs, and the SQLite state ledger by invoking `cleanup_cmd` through:
-
-```bash
-uv run dp cleanup
+uv sync                # install runtime + dev dependencies
+uv run pytest          # unit, integration, and pipeline tests
+uv run ruff check      # lint
+uv run mypy src        # static type check
 ```
 
 ## License

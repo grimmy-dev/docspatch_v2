@@ -10,7 +10,7 @@ from docspatch.pipelines.docs.context import GraphContext
 from docspatch.pipelines.docs.planner import collect_targets
 from docspatch.pipelines.docs.registry import TargetRegistry
 from docspatch.pipelines.docs.state import BatchRef, CostBreakdown, PlanState, TargetRef
-from docspatch.ui import console, cost_panel, status, warning_panel
+from docspatch.ui import confirm_or_skip, console, cost_panel, status, warning_panel
 from docspatch.utils.batcher import greedy_batches
 
 
@@ -163,11 +163,12 @@ def make_confirm(ctx: GraphContext):  # noqa: ANN201
                     "the full cost above is billed.",
                 )
             )
-        if ctx.auto_confirm or ctx.prompter is None:
-            return {"confirmed": True}
-        answer = ctx.prompter.confirm("Generate docstrings now?")
-        if not answer:
-            console.print("[dim]Docs run cancelled — nothing written.[/dim]")
-        return {"confirmed": bool(answer)}
+        answer = confirm_or_skip(
+            ctx.prompter,
+            "Generate docstrings now?",
+            bypass=ctx.auto_confirm,
+            cancel="[dim]Docs run cancelled — nothing written.[/dim]",
+        )
+        return {"confirmed": answer}
 
     return confirm
