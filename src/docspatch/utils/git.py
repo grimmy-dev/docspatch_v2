@@ -1,19 +1,7 @@
-"""Runs and parses shell executions of git configuration and repository history queries."""
+"""Runs and parses shell executions of git configuration queries."""
 
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-
-# Field separator for log records: a byte that cannot appear in a commit subject.
-_FIELD_SEP = "\x1f"
-
-
-@dataclass(frozen=True)
-class Commit:
-    """One commit's hash and subject line."""
-
-    sha: str
-    subject: str
 
 
 class GitReader:
@@ -50,14 +38,6 @@ class GitReader:
             return None
         return result.stdout.strip()
 
-    def is_repo(self) -> bool:
-        """Check if the workspace is located inside an initialized Git work tree.
-
-        Returns:
-            True if git reports being in a workspace, False otherwise.
-        """
-        return self._capture(["rev-parse", "--is-inside-work-tree"]) == "true"
-
     def config(self, key: str) -> str | None:
         """Retrieve a key value from local git configuration records.
 
@@ -68,35 +48,3 @@ class GitReader:
             The configured value string, or None if the key is unset.
         """
         return self._capture(["config", "--get", key]) or None
-
-    def last_commit_touching(self, pathspecs: list[str]) -> str | None:
-        """Find the commit hash of the latest commit that modified selected pathspecs.
-
-        Args:
-            pathspecs: Workspace paths to filter the history against.
-
-        Returns:
-            The latest matching commit SHA hash, or None if no commits match.
-        """
-        out = self._capture(["log", "-1", "--format=%H", "--", *pathspecs])
-        return out or None
-
-    def commits_since(self, ref: str | None, pathspecs: list[str]) -> list[Commit]:
-        """Query Git log to retrieve commits modified after a specific revision.
-
-        Args:
-            ref: Exclusive starting revision boundary, or null to walk the whole history.
-            pathspecs: List of repository patterns to filter the log.
-
-        Returns:
-            List of Commit dataclasses containing matching hash and subject line pairs.
-        """
-        rev_range = f"{ref}..HEAD" if ref else "HEAD"
-        out = self._capture(["log", rev_range, f"--format=%H{_FIELD_SEP}%s", "--", *pathspecs])
-        if not out:
-            return []
-        commits: list[Commit] = []
-        for line in out.splitlines():
-            sha, _, subject = line.partition(_FIELD_SEP)
-            commits.append(Commit(sha=sha, subject=subject))
-        return commits

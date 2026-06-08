@@ -3,11 +3,8 @@
 from typing import Protocol
 
 from docspatch.llm import LLMClient, TokenUsage
-from docspatch.pipelines.docs.prompts import (
-    DocstringItem,
-    build_batch_docstring_prompt,
-    needs_rewrite,
-)
+from docspatch.pipelines.docs.docstring_quality import needs_rewrite
+from docspatch.pipelines.docs.prompts import DocstringItem, build_batch_docstring_prompt
 from docspatch.pipelines.docs.render import render_google_docstring
 from docspatch.schemas import BatchDocstringOutput
 

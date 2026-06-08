@@ -15,6 +15,7 @@ from docspatch.utils.lockfile import run_lock
 from docspatch.utils.logging import get_logger
 from docspatch.utils.scope import discover_targets
 from docspatch.utils.session import client_for, load_session, verify_connection
+from docspatch.utils.timing import run_within_budget
 
 log = get_logger("docs")
 
@@ -104,22 +105,24 @@ def run(flags: RunFlags, prompter: Prompter | None = None) -> None:
 
         log.debug("starting docs pipeline")
         result = asyncio.run(
-            run_with_janitor(
-                targets,
-                generator,
-                tone=session.selections.tone,
-                repo_root=repo_root,
-                flags=flags,
-                batch_token_limit=settings.batch_token_limit,
-                concurrency_limit=settings.concurrency_limit,
-                call_timeout=settings.call_timeout,
-                provider=session.provider,
-                tier=session.tier,
-                prompter=p,
-                run_id=run_id,
-                switch_handler=handle_exhaustion,
-                retry_display=retry_display,
-                review_handler=review_handler,
+            run_within_budget(
+                run_with_janitor(
+                    targets,
+                    generator,
+                    tone=session.selections.tone,
+                    repo_root=repo_root,
+                    flags=flags,
+                    batch_token_limit=settings.batch_token_limit,
+                    concurrency_limit=settings.concurrency_limit,
+                    call_timeout=settings.call_timeout,
+                    provider=session.provider,
+                    tier=session.tier,
+                    prompter=p,
+                    run_id=run_id,
+                    switch_handler=handle_exhaustion,
+                    retry_display=retry_display,
+                    review_handler=review_handler,
+                )
             )
         )
 

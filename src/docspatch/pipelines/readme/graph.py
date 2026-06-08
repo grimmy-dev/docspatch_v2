@@ -53,10 +53,19 @@ def build_readme_graph(
 
     async def surfaces(state: ReadmeState) -> dict[str, Any]:
         paths = state["selected_paths"]
-        step(f"Reading {len(paths)} file surface(s)…")
-        results = await asyncio.gather(*(asyncio.to_thread(get_file_surface, repo_root, p) for p in paths))
-        surfaced = {p: s for p, s in zip(paths, results, strict=True) if s is not None}
-        log.debug("surfaces: %d of %d path(s) parsed", len(surfaced), len(paths))
+        total = len(paths)
+        step(f"Reading {total} file surface(s)…")
+
+        async def read_one(path: str) -> tuple[str, Surface | None]:
+            return path, await asyncio.to_thread(get_file_surface, repo_root, path)
+
+        surfaced: dict[str, Surface] = {}
+        for done, coro in enumerate(asyncio.as_completed([read_one(p) for p in paths]), start=1):
+            path, surface = await coro
+            step(f"Reading file surfaces… {done}/{total}")
+            if surface is not None:
+                surfaced[path] = surface
+        log.debug("surfaces: %d of %d path(s) parsed", len(surfaced), total)
         return {"surfaces": surfaced}
 
     async def drill(state: ReadmeState) -> dict[str, Any]:
@@ -77,11 +86,20 @@ def build_readme_graph(
             log.debug("bad plan, retry %d: %s", state["retry_count"] + 1, err)
             return {"phase": "drill", "retry_count": state["retry_count"] + 1, "drill_error": f"not in the surfaces: {err}"}
         good = [(p, f) for p, f in requests if _in_surface(surfaced, p, f)]
+        total = len(good)
         if good:
-            step(f"Reading {len(good)} key implementation(s)…")
-        fetched = await asyncio.gather(*(asyncio.to_thread(get_function_body, repo_root, p, f) for p, f in good))
-        body_map = {body_key(p, f): body for (p, f), body in zip(good, fetched, strict=True) if body is not None}
-        log.debug("bodies: %d fetched of %d valid request(s)", len(body_map), len(good))
+            step(f"Reading {total} key implementation(s)…")
+
+        async def read_one(path: str, function_name: str) -> tuple[str, str, str | None]:
+            return path, function_name, await asyncio.to_thread(get_function_body, repo_root, path, function_name)
+
+        body_map: dict[str, str] = {}
+        for done, coro in enumerate(asyncio.as_completed([read_one(p, f) for p, f in good]), start=1):
+            path, function_name, body = await coro
+            step(f"Reading key implementations… {done}/{total}")
+            if body is not None:
+                body_map[body_key(path, function_name)] = body
+        log.debug("bodies: %d fetched of %d valid request(s)", len(body_map), total)
         return {"bodies": body_map, "phase": "done" if not bad else "exhausted"}
 
     def weave_node(state: ReadmeState) -> dict[str, Any]:

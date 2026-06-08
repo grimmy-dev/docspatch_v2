@@ -34,45 +34,9 @@ class Batch[T]:
 
 @dataclass(frozen=True)
 class BatchPlan[T]:
-    """Result of `greedy_batches`. Carries derived counts to avoid recomputation."""
+    """Result of `greedy_batches`: the packed batches in input order."""
 
     batches: tuple[Batch[T], ...] = field(default_factory=tuple)
-
-    @property
-    def batch_count(self) -> int:
-        """Return the total number of processed batches in the plan.
-
-        Returns:
-            Number of generated batches.
-        """
-        return len(self.batches)
-
-    @property
-    def item_count(self) -> int:
-        """Calculate the aggregate number of items across all batches.
-
-        Returns:
-            Sum of items across all batches.
-        """
-        return sum(len(b.items) for b in self.batches)
-
-    @property
-    def oversized_count(self) -> int:
-        """Count the number of batches categorized as oversized.
-
-        Returns:
-            Number of oversized batches.
-        """
-        return sum(1 for b in self.batches if b.oversized)
-
-    @property
-    def total_size(self) -> int:
-        """Calculate the cumulative size of all items across all batches.
-
-        Returns:
-            Sum of all batch sizes.
-        """
-        return sum(b.total_size for b in self.batches)
 
 
 def greedy_batches[T](

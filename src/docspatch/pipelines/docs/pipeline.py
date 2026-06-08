@@ -26,10 +26,11 @@ from docspatch.pipelines.docs.generator import DocstringGenerator
 from docspatch.pipelines.docs.plan_graph import batch_targets, build_plan_graph
 from docspatch.pipelines.docs.state import DocsResult, FinalizeResult, GeneratedDoc, PlanState
 from docspatch.pipelines.fanout import load_state
-from docspatch.ui import Prompter, cache_hit_row, console, cost_rows, progress_bar, render_summary
+from docspatch.ui import Prompter, cache_hit_row, console, cost_rows, progress_bar, render_summary, status
 from docspatch.ui.retry_display import RetryDisplay
 from docspatch.utils.logging import get_logger
 from docspatch.utils.secrets import scrub
+from docspatch.utils.timing import format_duration
 
 log = get_logger("docs.pipeline")
 
@@ -74,7 +75,7 @@ def _render_docs_summary(
         rows = [
             ("Model", f"{model} ({provider})"),
             *cost_rows(usage, provider, tier, sunk=True),
-            ("Elapsed", f"{elapsed:.1f}s"),
+            ("Elapsed", format_duration(elapsed)),
         ]
         render_summary("Docs run aborted — nothing written", rows, border_style="yellow")
         return
@@ -86,7 +87,7 @@ def _render_docs_summary(
         ("Skipped files", str(len(outcome.skipped))),
         cache_hit_row(cache_hits, scanned),
         *cost_rows(usage, provider, tier),
-        ("Elapsed", f"{elapsed:.1f}s"),
+        ("Elapsed", format_duration(elapsed)),
     ]
     render_summary("Docs run complete", rows, border_style="green")
 
@@ -156,8 +157,9 @@ async def run_docs(
         # that had targets but went unwritten (declined or skipped) is left out, so
         # the next run re-detects it instead of fast-skipping undocumented work.
         keep = [p for p in rel_paths if p not in target_files or p in committed]
-        hashes, stamps = manifest.compute_state(MANIFEST_PIPELINE, root, keep)
-        manifest.commit(MANIFEST_PIPELINE, hashes, stamps)
+        with status("Recording baseline…"):
+            hashes, stamps = manifest.compute_state(MANIFEST_PIPELINE, root, keep)
+            manifest.commit(MANIFEST_PIPELINE, hashes, stamps)
         log.debug("recorded docs manifest: %d/%d path(s) (committed=%d)", len(keep), len(rel_paths), len(committed))
 
     summary = RunSummary(

@@ -60,6 +60,42 @@ def extract_module_docstring(source: str) -> str | None:
     return ast.get_docstring(tree)
 
 
+def ast_structural_hash(source: str) -> str:
+    """Hash a module's structure, ignoring docstrings, comments, and formatting.
+
+    Parses to an AST, drops docstrings, and hashes the attribute-free dump, so
+    the digest changes only when code structure changes. ``ast`` carries no
+    comments and the dump omits line numbers, so both fall out for free. Falls
+    back to a raw hash when the source does not parse.
+
+    Args:
+        source: Raw Python source text.
+
+    Returns:
+        The hexadecimal structural hash.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return file_hash(source)
+    _strip_docstrings(tree)
+    return file_hash(ast.dump(tree, include_attributes=False))
+
+
+def _strip_docstrings(tree: ast.AST) -> None:
+    """Drop the leading string-literal docstring from every scope in the tree.
+
+    Args:
+        tree: The AST to mutate in place.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Module | ast.ClassDef | FunctionNode):
+            continue
+        first = node.body[0] if node.body else None
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+            node.body = node.body[1:]
+
+
 def _build_args(fn_args: ast.arguments) -> list[str]:
     """Convert AST argument structures into a list of formatted strings.
 

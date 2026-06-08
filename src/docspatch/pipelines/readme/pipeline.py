@@ -11,19 +11,17 @@ from docspatch.manifest import ChangeManifest, ChangeSet
 from docspatch.pipelines.readme.generator import ReadmeGenerator
 from docspatch.pipelines.readme.prompts import TOOL_DEFS
 from docspatch.pipelines.readme.state import PreContext, ReadmeResult, ReadmeState
-from docspatch.ui import Prompter, console, cost_rows, render_summary, status
+from docspatch.ui import Prompter, confirm_or_skip, console, cost_rows, kv_panel, render_summary, status, timed_status
+from docspatch.ui.prompter import aprompt, is_interactive
 from docspatch.ui.readme_review import review_readme
+from docspatch.utils.entry_points import entry_point_commands, entry_point_targets
 from docspatch.utils.fs import atomic_write
 from docspatch.utils.ignore import load_docsignore
 from docspatch.utils.logging import get_logger
-from docspatch.utils.project import (
-    entry_point_commands,
-    entry_point_targets,
-    get_dir_tree,
-    project_dependencies,
-    project_facts,
-)
+from docspatch.utils.project_metadata import project_dependencies, project_facts
 from docspatch.utils.scope import discover_targets
+from docspatch.utils.timing import clock, format_duration
+from docspatch.utils.tree import get_dir_tree
 
 if TYPE_CHECKING:
     from docspatch.llm import LLMClient
@@ -119,6 +117,48 @@ def _tagged_tree(repo_root: Path, scope: str, state: ScopeState) -> str:
     return f"{header}\n\nFiles:\n" + "\n".join(lines)
 
 
+def _run_facts(scope: str, state: ScopeState) -> list[tuple[str, str]]:
+    """List the scope, change counts, and scanned total for the pre-flight panel.
+
+    Args:
+        scope: The repo-relative scope of the README.
+        state: The scanned file states and change set.
+
+    Returns:
+        Key-value rows describing the planned run.
+    """
+    cs = state.change_set
+    rows = [
+        ("Scope", "repo root" if scope in _ROOT_SCOPES else scope),
+        ("Changed", f"{len(cs.changed)} file(s) ({len(cs.updated)} updated, {len(cs.added)} new)"),
+        ("Scanned", f"{len(state.paths)} file(s)"),
+    ]
+    if cs.removed:
+        rows.append(("Removed", f"{len(cs.removed)} file(s)"))
+    return rows
+
+
+def _confirm_generation(prompter: Prompter, scope: str, state: ScopeState, *, auto_confirm: bool) -> bool:
+    """Show the planned run and confirm before any model call.
+
+    Args:
+        prompter: Interface for user input.
+        scope: The repo-relative scope of the README.
+        state: The scanned file states and change set.
+        auto_confirm: Skip the prompt when already gated upstream.
+
+    Returns:
+        True to proceed with generation.
+    """
+    console.print(kv_panel("README run", _run_facts(scope, state)))
+    return confirm_or_skip(
+        prompter,
+        "Generate README now?",
+        bypass=auto_confirm or not is_interactive(),
+        cancel="[dim]README cancelled — nothing written.[/dim]",
+    )
+
+
 def _initial_state(pre: PreContext, existing: str | None) -> ReadmeState:
     """Build the starting state model for the context-resolution graph.
 
@@ -159,6 +199,7 @@ async def generate_readme(
     remarks: str | None,
     provider: str,
     tier: str,
+    auto_confirm: bool = False,
 ) -> ReadmeResult:
     """Generate the codebase context, draft the README, and prompt the user to approve changes.
 
@@ -187,11 +228,14 @@ async def generate_readme(
         console.print("[green]✓[/green] README is fresh — nothing scoped changed.")
         return ReadmeResult(written=False, out_path=None, usage=TokenUsage())
 
+    if not await aprompt(_confirm_generation, prompter, scope, state, auto_confirm=auto_confirm):
+        return ReadmeResult(written=False, out_path=None, usage=TokenUsage())
+
     pre = build_pre_context(root, scope, state)
     log.debug("pre-context: %d scoped file(s), %d changed", len(state.paths), len(state.change_set.changed))
 
     log.debug("resolving context for %d scoped file(s)", len(state.paths))
-    with console.status("Reading the codebase…", spinner="dots") as live:
+    with timed_status("Reading the codebase…") as live:
         graph = build_readme_graph(root, analysis_client, progress=lambda m: live.update(f"[cyan]{m}[/cyan]"))
         resolved = await graph.ainvoke(_initial_state(pre, existing))
     woven, ctx_usage = resolved["woven"], resolved["usage"]
@@ -214,7 +258,7 @@ async def generate_readme(
 
     render_summary(
         "README written" if written else "README cancelled",
-        cost_rows(usage, provider, tier),
+        [*cost_rows(usage, provider, tier), ("Elapsed", format_duration(clock.wall_elapsed()))],
         border_style="green" if written else "yellow",
     )
     return ReadmeResult(written=written, out_path=out_path if written else None, usage=usage)

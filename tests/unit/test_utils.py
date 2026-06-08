@@ -3,13 +3,10 @@
 import tomllib
 
 from docspatch.utils.config import ConfigStore, load_config
+from docspatch.utils.entry_points import entry_point_targets, is_entry_point_path
 from docspatch.utils.licenses import insert_copyright
-from docspatch.utils.project import (
-    entry_point_targets,
-    get_dir_tree,
-    get_pyproject_field,
-    is_entry_point_path,
-)
+from docspatch.utils.project_metadata import get_pyproject_field
+from docspatch.utils.tree import get_dir_tree
 
 
 def test_insert_copyright_adds_line_after_title():
@@ -66,23 +63,21 @@ def test_config_missing_files_use_defaults(tmp_path):
 
 
 def test_project_missing_fields_return_none(tmp_path):
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nname = "myapp"\n')
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "myapp"\n')
 
-    assert get_pyproject_field(pyproject, "version") is None
-    assert get_pyproject_field(pyproject, "description") is None
+    assert get_pyproject_field(tmp_path, "version") is None
+    assert get_pyproject_field(tmp_path, "description") is None
 
 
 def test_project_existing_field_returned(tmp_path):
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nname = "myapp"\nversion = "1.0"\n')
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "myapp"\nversion = "1.0"\n')
 
-    assert get_pyproject_field(pyproject, "name") == "myapp"
-    assert get_pyproject_field(pyproject, "version") == "1.0"
+    assert get_pyproject_field(tmp_path, "name") == "myapp"
+    assert get_pyproject_field(tmp_path, "version") == "1.0"
 
 
 def test_project_missing_file_returns_none(tmp_path):
-    assert get_pyproject_field(tmp_path / "pyproject.toml", "name") is None
+    assert get_pyproject_field(tmp_path, "name") is None
 
 
 def test_entry_point_targets_collects_scripts_gui_and_entry_points(tmp_path):

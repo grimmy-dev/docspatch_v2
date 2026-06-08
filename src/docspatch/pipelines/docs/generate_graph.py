@@ -29,7 +29,7 @@ async def generate_for_batch(ctx: GraphContext, batch: BatchRef, feedback: dict[
     items: list[DocstringItem] = []
     refs: list[TargetRef] = []
     for ref in batch.targets:
-        t = ctx.full_targets.get((ref.rel, ref.qualname))
+        t = ctx.registry.get(ref)
         if t is None:
             continue
         key = f"{ref.rel}::{ref.qualname}"

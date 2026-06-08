@@ -8,9 +8,9 @@ from docspatch.llm.catalogue import tier_info
 from docspatch.llm.pricing import estimate_cost
 from docspatch.pipelines.docs.context import GraphContext
 from docspatch.pipelines.docs.planner import collect_targets
+from docspatch.pipelines.docs.registry import TargetRegistry
 from docspatch.pipelines.docs.state import BatchRef, CostBreakdown, PlanState, TargetRef
-from docspatch.source import file_hash
-from docspatch.ui import console, cost_panel, status, warning_panel
+from docspatch.ui import confirm_or_skip, console, cost_panel, status, warning_panel
 from docspatch.utils.batcher import greedy_batches
 
 
@@ -51,10 +51,7 @@ def batch_targets(ctx: GraphContext, targets: list[TargetRef], offset: int = 0) 
     if not targets:
         return []
 
-    def size(ref: TargetRef) -> int:
-        return ctx.full_targets[(ref.rel, ref.qualname)].token_cost
-
-    plan = greedy_batches(targets, size_fn=size, limit=ctx.batch_token_limit)
+    plan = greedy_batches(targets, size_fn=ctx.registry.token_cost, limit=ctx.batch_token_limit)
     return [BatchRef(id=offset + i, targets=list(b.items)) for i, b in enumerate(plan.batches)]
 
 
@@ -71,11 +68,7 @@ def make_plan(ctx: GraphContext):  # noqa: ANN201
     def plan(state: PlanState) -> PlanState:
         with status("Scanning files..."):
             result = collect_targets(state["paths"], state["repo_root"], ctx.prev_stamps, update=state["flags"].update)
-        ctx.full_targets = {(t.rel, t.qualname): t for t in result.targets}
-        # Snapshot each target file's hash now, so commit can tell whether the
-        # file changed on disk between planning and writing.
-        root = state["repo_root"].resolve()
-        ctx.plan_hashes = {rel: file_hash((root / rel).read_text()) for rel in {t.rel for t in result.targets}}
+        ctx.registry = TargetRegistry.from_targets(state["repo_root"].resolve(), result.targets, result.file_hashes)
         refs = [TargetRef(rel=t.rel, qualname=t.qualname) for t in result.targets]
         return {"targets": refs, "cache_hits": result.cache_hits}
 
@@ -110,7 +103,7 @@ def make_estimate(ctx: GraphContext):  # noqa: ANN201
 
     def estimate(state: PlanState) -> PlanState:
         targets = state["targets"]
-        total_input = sum(ctx.full_targets[(r.rel, r.qualname)].token_cost for r in targets)
+        total_input = sum(ctx.registry.token_cost(r) for r in targets)
         per_file_counts: dict[str, int] = defaultdict(int)
         for r in targets:
             per_file_counts[r.rel] += 1
@@ -139,8 +132,6 @@ def make_estimate(ctx: GraphContext):  # noqa: ANN201
                     ("Files", str(breakdown.files)),
                     ("Functions", str(breakdown.functions)),
                     ("Input tokens", f"~{est.input_tokens:,}"),
-                    ("Output tokens", f"~{est.output_tokens:,} (projected)"),
-                    ("Cost", f"~${est.total:.4f}  (in ${est.input_cost:.4f} + out ${est.output_cost:.4f})"),
                 ],
                 per_file=breakdown.per_file,
             )
@@ -172,11 +163,12 @@ def make_confirm(ctx: GraphContext):  # noqa: ANN201
                     "the full cost above is billed.",
                 )
             )
-        if ctx.auto_confirm or ctx.prompter is None:
-            return {"confirmed": True}
-        answer = ctx.prompter.confirm("Generate docstrings now?")
-        if not answer:
-            console.print("[dim]Docs run cancelled — nothing written.[/dim]")
-        return {"confirmed": bool(answer)}
+        answer = confirm_or_skip(
+            ctx.prompter,
+            "Generate docstrings now?",
+            bypass=ctx.auto_confirm,
+            cancel="[dim]Docs run cancelled — nothing written.[/dim]",
+        )
+        return {"confirmed": answer}
 
     return confirm

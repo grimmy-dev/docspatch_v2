@@ -1,11 +1,6 @@
 """Docs batch-prompt construction: feedback rendering + banned-phrase detection."""
 
-from docspatch.pipelines.docs.prompts import (
-    BANNED_PHRASES,
-    DocstringItem,
-    build_batch_docstring_prompt,
-    contains_banned_phrase,
-)
+from docspatch.pipelines.docs.prompts import DocstringItem, build_batch_docstring_prompt
 
 
 def test_prompt_omits_feedback_section_when_empty() -> None:
@@ -39,11 +34,3 @@ def test_prompt_includes_remarks_when_given() -> None:
     assert "Use British spelling." in prompt
 
 
-def test_contains_banned_phrase_case_insensitive() -> None:
-    assert contains_banned_phrase("This function returns x.")
-    assert contains_banned_phrase("It is responsible for X.")
-    assert not contains_banned_phrase("Return the sum of inputs.")
-
-
-def test_banned_phrase_constants_stable() -> None:
-    assert "this function" in BANNED_PHRASES

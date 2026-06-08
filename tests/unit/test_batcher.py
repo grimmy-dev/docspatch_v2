@@ -12,13 +12,11 @@ def size_int(x: int) -> int:
 def test_empty_input_returns_empty_plan():
     plan = greedy_batches([], size_int, limit=10)
     assert plan.batches == ()
-    assert plan.batch_count == 0
-    assert plan.item_count == 0
 
 
 def test_single_item_fits_in_one_batch():
     plan = greedy_batches([4], size_int, limit=10)
-    assert plan.batch_count == 1
+    assert len(plan.batches) == 1
     assert plan.batches[0].items == (4,)
     assert plan.batches[0].total_size == 4
     assert not plan.batches[0].oversized
@@ -27,14 +25,14 @@ def test_single_item_fits_in_one_batch():
 def test_greedy_fills_until_next_would_exceed():
     plan = greedy_batches([3, 3, 3, 3], size_int, limit=8)
     # 3+3=6, +3=9 > 8 → flush. Second batch 3+3=6.
-    assert plan.batch_count == 2
+    assert len(plan.batches) == 2
     assert plan.batches[0].items == (3, 3)
     assert plan.batches[1].items == (3, 3)
 
 
 def test_oversized_item_isolated_with_flag():
     plan = greedy_batches([2, 50, 2], size_int, limit=10)
-    assert plan.batch_count == 3
+    assert len(plan.batches) == 3
     assert plan.batches[0].items == (2,)
     assert plan.batches[1].items == (50,)
     assert plan.batches[1].oversized is True
@@ -61,7 +59,7 @@ def test_every_item_appears_exactly_once():
     plan = greedy_batches(items, size_int, limit=10)
     flat = [i for b in plan.batches for i in b.items]
     assert sorted(flat) == sorted(items)
-    assert plan.item_count == len(items)
+    assert len(flat) == len(items)
 
 
 def test_invalid_limit_raises():
@@ -91,5 +89,5 @@ def test_oversized_batch_constructor_rejects_multi_item():
 
 def test_plan_total_size_correct():
     plan = greedy_batches([3, 3, 3, 3], size_int, limit=8)
-    assert plan.total_size == 12
-    assert plan.oversized_count == 0
+    assert sum(b.total_size for b in plan.batches) == 12
+    assert not any(b.oversized for b in plan.batches)

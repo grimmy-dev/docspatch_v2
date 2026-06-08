@@ -437,6 +437,29 @@ class LockError(DocspatchError):
         )
 
 
+class RunTimeout(DocspatchError):
+    """A run's active work ran past its time budget — likely a stuck pipeline."""
+
+    code: ClassVar[str] = "docspatch.timeout"
+    exit_code: ClassVar[int] = EXIT_TRANSIENT
+
+    @classmethod
+    def exceeded(cls, budget: float) -> RunTimeout:
+        """Instantiate an error for a run that overran its active-time budget.
+
+        Args:
+            budget: The active-work budget in seconds that was exceeded.
+
+        Returns:
+            A RunTimeout indicating the run was aborted.
+        """
+        minutes = int(budget // 60)
+        return cls(
+            f"Run aborted after {minutes} min of active work — the pipeline appears stuck.",
+            hint="Re-run with --resume to continue, or narrow the scope.",
+        )
+
+
 class CacheError(DocspatchError):
     """Cache read/write failed — a corrupt or unreachable cache is a bug."""
 

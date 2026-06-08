@@ -10,8 +10,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from docspatch.checkpoints.ledger import TokenLedger
 from docspatch.pipelines.docs.generator import DocstringGenerator
-from docspatch.pipelines.docs.planner import Target
-from docspatch.pipelines.docs.state import GenKey
+from docspatch.pipelines.docs.registry import TargetRegistry
 from docspatch.ui import Prompter
 from docspatch.ui.progress import BarHandle
 
@@ -71,9 +70,6 @@ class GraphContext:
         self.tone = tone
         # Stat stamps from the last successful docs run, for planner fast-skip.
         self.prev_stamps = prev_stamps
-        # File hashes captured at plan time, so commit can detect a file that
-        # changed on disk between planning and writing. Filled by the plan node.
-        self.plan_hashes: dict[str, str] = {}
         self.provider = provider
         self.tier = tier
         self.prompter = prompter
@@ -83,8 +79,25 @@ class GraphContext:
         self.interactive = interactive
         self.call_timeout = call_timeout
         self.ledger = ledger
-        self.full_targets: dict[GenKey, Target] = {}
+        # Heavy bodies + plan-time hashes, set once by the plan node. Read access
+        # before planning is a wiring bug, so the property below fails fast.
+        self._registry: TargetRegistry | None = None
         self.advance: BarHandle | None = None
+
+    @property
+    def registry(self) -> TargetRegistry:
+        """Return the plan-time target registry.
+
+        Raises:
+            RuntimeError: A node read the registry before the plan node built it.
+        """
+        if self._registry is None:
+            raise RuntimeError("target registry read before planning")
+        return self._registry
+
+    @registry.setter
+    def registry(self, value: TargetRegistry) -> None:
+        self._registry = value
 
 
 async def load_metadata(saver: AsyncSqliteSaver, config: RunnableConfig) -> dict[str, Any]:

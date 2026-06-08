@@ -10,7 +10,9 @@ from docspatch.source import (
     MODULE_QUALNAME,
     FunctionNode,
     compress,
+    estimate_tokens,
     extract_module_docstring,
+    file_hash,
 )
 
 
@@ -31,14 +33,20 @@ class Target:
         Returns:
             An integer representation of estimated token usage.
         """
-        return (len(self.signature) + len(self.body)) // 4
+        return estimate_tokens(self.signature + self.body)
 
 
 class CollectResult(NamedTuple):
-    """Targets needing docstrings, plus how many functions were already documented."""
+    """Targets needing docstrings, plus how many functions were already documented.
+
+    ``file_hashes`` holds the plan-time raw hash of each file that produced a
+    target, captured from the source already read here so the registry need not
+    re-read those files.
+    """
 
     targets: list[Target]
     cache_hits: int
+    file_hashes: dict[str, str]
 
 
 def collect_targets(
@@ -61,6 +69,7 @@ def collect_targets(
     """
     out: list[Target] = []
     cache_hits = 0
+    file_hashes: dict[str, str] = {}
     root = repo_root.resolve()
     for path in paths:
         abs_path = path.resolve()
@@ -82,12 +91,15 @@ def collect_targets(
             tree = ast.parse(source)
         except SyntaxError:
             continue
+        before = len(out)
         module = module_target(abs_path, rel, source, update=update)
         if module is not None:
             out.append(module)
         source_lines = source.splitlines()
         cache_hits += walk_targets(tree, source_lines, parents=[], file=abs_path, rel=rel, out=out, update=update)
-    return CollectResult(out, cache_hits)
+        if len(out) > before:
+            file_hashes[rel] = file_hash(source)
+    return CollectResult(out, cache_hits, file_hashes)
 
 
 def module_target(file: Path, rel: str, source: str, *, update: bool) -> Target | None:

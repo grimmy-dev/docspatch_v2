@@ -24,6 +24,7 @@ from docspatch.pipelines.docs.state import (
 from docspatch.pipelines.fanout import load_state
 from docspatch.source import MODULE_QUALNAME
 from docspatch.ui import status
+from docspatch.utils.timing import clock
 
 
 async def drive_finalize(
@@ -54,16 +55,16 @@ async def drive_finalize(
     # Any: graph input is the initial state dict on the first turn, then a
     # Command(resume=...) on every loop after an interrupt — no shared static type.
     next_input: Any = {"entries": entries}
-    # Bridge the gap after the progress bar clears: the first invocation reads
-    # state and builds the review queue before it interrupts. Only the first —
-    # an interactive run always stops at the review interrupt before reaching
-    # commit, so commit's own status spinner never nests inside this one.
-    bridging = handler is not None
+    # Spinner shown over the next ainvoke. The first turn bridges the gap after
+    # the progress bar clears while the review queue is built; later turns cover
+    # the regenerate fan-out when the reviewer reruns entries, which is otherwise
+    # silent. None means the turn goes straight to an interrupt or to commit
+    # (which owns its spinner), so no spinner nests inside this one.
+    pending_msg = "Preparing review..." if handler is not None else None
     while True:
-        if bridging:
-            with status("Preparing review..."):
+        if pending_msg:
+            with status(pending_msg):
                 result = await graph.ainvoke(next_input, config=config)
-            bridging = False
         else:
             result = await graph.ainvoke(next_input, config=config)
         interrupts = result.get("__interrupt__")
@@ -71,8 +72,10 @@ async def drive_finalize(
             break
         if handler is None:
             raise RuntimeError("graph raised an interrupt but no review handler was supplied")
-        choice = await asyncio.to_thread(handler, interrupts[0].value)
+        with clock.paused():
+            choice = await asyncio.to_thread(handler, interrupts[0].value)
         next_input = Command(resume=choice)
+        pending_msg = "Regenerating docstrings…" if choice.get("rerun") else None
 
     final = await load_state(saver, config)
     await saver.adelete_thread(thread_id)
@@ -211,10 +214,10 @@ def rerun_batches(ctx: GraphContext, rerun_ids: list[str]) -> list[BatchRef]:
         A list of target batches optimized for API limits.
     """
     refs = [
-        TargetRef(rel=rel, qualname=qualname)
+        ref
         for rid in rerun_ids
         for rel, _, qualname in [rid.partition("::")]
-        if (rel, qualname) in ctx.full_targets
+        if (ref := TargetRef(rel=rel, qualname=qualname)) in ctx.registry
     ]
     return batch_targets(ctx, refs)
 

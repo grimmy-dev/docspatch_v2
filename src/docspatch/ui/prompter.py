@@ -8,6 +8,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 
 import questionary
 
+from docspatch.ui.console import console, suspend_timer
 from docspatch.utils.errors import ConfigError
 
 Choices = list[str] | Mapping[str, object]
@@ -124,7 +125,8 @@ class QuestionaryPrompter:
             if default is None:
                 raise ConfigError.headless_no_input(question)
             return default
-        return questionary.select(question, choices=_to_questionary_choices(choices), default=default).ask()
+        with suspend_timer():
+            return questionary.select(question, choices=_to_questionary_choices(choices), default=default).ask()
 
     def password(self, question: str) -> str:
         """Prompt the user for a password using Questionary, requiring interactive mode.
@@ -140,7 +142,8 @@ class QuestionaryPrompter:
         """
         if not is_interactive():
             raise ConfigError.headless_no_input(question)
-        return str(questionary.password(question).ask())
+        with suspend_timer():
+            return str(questionary.password(question).ask())
 
     def confirm(self, question: str, default: bool = True) -> bool:
         """Prompt the user for confirmation using Questionary.
@@ -154,7 +157,8 @@ class QuestionaryPrompter:
         """
         if not is_interactive():
             return default
-        result = questionary.confirm(question, default=default).ask()
+        with suspend_timer():
+            result = questionary.confirm(question, default=default).ask()
         return bool(result)
 
     def checkbox(self, question: str, choices: Choices) -> list[object]:
@@ -169,7 +173,8 @@ class QuestionaryPrompter:
         """
         if not is_interactive():
             return []
-        return questionary.checkbox(question, choices=_to_questionary_choices(choices)).ask() or []
+        with suspend_timer():
+            return questionary.checkbox(question, choices=_to_questionary_choices(choices)).ask() or []
 
     def text(self, question: str, default: str = "") -> str:
         """Prompt the user for single-line text using Questionary.
@@ -183,7 +188,8 @@ class QuestionaryPrompter:
         """
         if not is_interactive():
             return default
-        result = questionary.text(question, default=default).ask()
+        with suspend_timer():
+            result = questionary.text(question, default=default).ask()
         return "" if result is None else str(result)
 
     def edit(self, question: str, default: str = "") -> str:
@@ -198,7 +204,8 @@ class QuestionaryPrompter:
         """
         if not is_interactive():
             return default
-        result = questionary.text(question, default=default, multiline=True).ask()
+        with suspend_timer():
+            result = questionary.text(question, default=default, multiline=True).ask()
         return default if result is None else str(result)
 
 
@@ -309,6 +316,26 @@ class ScriptedPrompter:
         return default if value is None else str(value)
 
 
+def confirm_or_skip(prompter: Prompter | None, question: str, *, bypass: bool, cancel: str) -> bool:
+    """Ask the user to approve an action, or proceed silently when running unattended.
+
+    Args:
+        prompter: The interactive prompter, or None when no prompt is possible.
+        question: The confirmation question to ask.
+        bypass: Skip the prompt and proceed when already gated upstream or headless.
+        cancel: Message printed when the user declines.
+
+    Returns:
+        True to proceed, False when the user declined.
+    """
+    if bypass or prompter is None:
+        return True
+    answer = prompter.confirm(question)
+    if not answer:
+        console.print(cancel)
+    return answer
+
+
 async def aprompt[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T:
     """Run a synchronous prompter query within a separate executor thread.
 
@@ -318,7 +345,10 @@ async def aprompt[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T
     Returns:
         The value returned by the prompt function.
     """
-    return await asyncio.to_thread(fn, *args, **kwargs)
+    from docspatch.utils.timing import clock
+
+    with clock.paused():
+        return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 def _to_questionary_choices(choices: Choices) -> list[str | questionary.Choice]:
