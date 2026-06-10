@@ -1,0 +1,25 @@
+# Example pre-commit configuration for a project using docspatch.
+# Install the framework, then enable the hooks:
+#
+#   uv tool install pre-commit      # or: pipx install pre-commit
+#   pre-commit install
+#
+# `docspatch-check` makes no model calls and needs no API key, so it is safe to
+# run on every commit. It exits non-zero (blocking the commit) when the README
+# or any docstrings are stale; run `dp docs` / `dp readme` to refresh them.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.1
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: docspatch-check
+        name: docspatch staleness check
+        entry: dp check
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `dp check` command — reports whether the README or any docstrings are stale and
+  exits non-zero if so, with no model calls or configuration required, so it can
+  run as a pre-commit hook. `dp init` runs the same report at the end of setup.
+- Welcome banner — `dp init` opens with an ASCII banner showing the version and
+  issue link; the same banner heads the project README.
 - `dp readme` command and README pipeline: a LangGraph agent scopes a directory,
   maps its source with a fast analysis model, then drafts or refreshes a
   `README.md` for side-by-side review before writing.

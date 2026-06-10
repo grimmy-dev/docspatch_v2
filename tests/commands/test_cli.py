@@ -6,7 +6,7 @@ from docspatch.cli import app
 
 runner = CliRunner()
 
-SUBCOMMANDS = ["init", "docs", "config", "cleanup"]
+SUBCOMMANDS = ["init", "docs", "config", "cleanup", "check"]
 
 
 def test_help_exits_zero():

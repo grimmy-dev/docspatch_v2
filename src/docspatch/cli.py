@@ -5,7 +5,7 @@ from pathlib import Path
 
 import typer
 
-from docspatch.commands import cleanup, config, docs, init, readme
+from docspatch.commands import check, cleanup, config, docs, init, readme
 from docspatch.ui.console import command_timer, err_console
 from docspatch.utils.errors import EXIT_INTERNAL, DocspatchError
 from docspatch.utils.logging import configure_logging, get_logger
@@ -133,6 +133,16 @@ def readme_cmd(
     """
     flags = readme.ReadmeFlags(path=path, update=update, check=check, remarks=remarks)
     invoke_command(lambda: readme.run(flags), debug, "readme", timer=True)
+
+
+@app.command("check")
+def check_cmd(debug: bool = DEBUG_OPTION) -> None:
+    """Report whether README and docstrings are stale; exit non-zero if so. No model calls.
+
+    Args:
+        debug: Enable verbose tracing.
+    """
+    invoke_command(check.run, debug, "check")
 
 
 @app.command("cleanup")

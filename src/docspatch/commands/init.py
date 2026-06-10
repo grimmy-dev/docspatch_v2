@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
+from docspatch.commands import check
 from docspatch.ui import Prompter, QuestionaryPrompter, console, status
+from docspatch.ui.banner import render_banner
 from docspatch.utils.config import ConfigStore, default_store
 from docspatch.utils.ignore import ensure_docspatch_ignored
 from docspatch.utils.logging import get_logger
@@ -26,6 +28,7 @@ def run(
         prompter: Custom prompt interface to gather inputs.
     """
     repo_root = repo_root or Path.cwd()
+    render_banner()
     p = prompter or QuestionaryPrompter()
     store = resolve_store(repo_root, global_config_path)
 
@@ -40,6 +43,9 @@ def run(
 
     ensure_docspatch_ignored(repo_root)
     console.print("[green]✓[/green] .docspatch added to .gitignore")
+
+    console.print()
+    check.report(repo_root.resolve())
     console.print("[green]✓[/green] docspatch is ready. Run `dp docs` to document code or `dp readme` to generate a README.")
 
 
